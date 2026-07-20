@@ -678,6 +678,11 @@ struct SettingsView: View {
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("Settings")
+                        .font(FactumTheme.headlineFont)
+                        .foregroundStyle(FactumTheme.primaryText)
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                         .foregroundStyle(FactumTheme.accent)
@@ -689,6 +694,7 @@ struct SettingsView: View {
         }
         .presentationBackground(FactumTheme.background)
         .preferredColorScheme(appearanceMode == 0 ? nil : (appearanceMode == 1 ? .light : .dark))
+        .animation(.easeInOut(duration: 0.3), value: appearanceMode)
     }
     
     private func settingsRow(icon: String, title: String) -> some View {

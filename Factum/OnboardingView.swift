@@ -16,14 +16,18 @@ struct OnboardingView: View {
     @State private var isAnimating = false
     @State private var isSigningIn = false
     @State private var signInError: String?
-    @State private var showSignUp = false
+    @State private var isSignUpMode = false
     @State private var email = ""
     @State private var password = ""
+    @State private var displayName = ""
+    @State private var confirmPassword = ""
+    @State private var signUpSuccess = false
+    @State private var showGoogleProfileSetup = false
     @FocusState private var focusedField: AuthField?
     let onComplete: () -> Void
     
     private enum AuthField {
-        case email, password
+        case name, email, password, confirm
     }
     
     var body: some View {
@@ -42,19 +46,18 @@ struct OnboardingView: View {
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
                 
-                // Page indicator
-                HStack(spacing: 8) {
-                    ForEach(0..<4, id: \.self) { index in
-                        RoundedRectangle(cornerRadius: 3)
-                            .fill(index == currentPage ? FactumTheme.accent : FactumTheme.elevated)
-                            .frame(width: index == currentPage ? 24 : 8, height: 8)
-                            .animation(.easeInOut(duration: 0.25), value: currentPage)
-                    }
-                }
-                .padding(.bottom, 32)
-                
-                // Bottom button
+                // Page indicator + bottom button (only on pages 0–2)
                 if currentPage < 3 {
+                    HStack(spacing: 8) {
+                        ForEach(0..<4, id: \.self) { index in
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(index == currentPage ? FactumTheme.accent : FactumTheme.elevated)
+                                .frame(width: index == currentPage ? 24 : 8, height: 8)
+                                .animation(.easeInOut(duration: 0.25), value: currentPage)
+                        }
+                    }
+                    .padding(.bottom, 32)
+                    
                     Button {
                         withAnimation {
                             currentPage += 1
@@ -71,17 +74,17 @@ struct OnboardingView: View {
                     .buttonStyle(.plain)
                     .padding(.horizontal, 24)
                     .padding(.bottom, 40)
-                } else {
-                    Spacer().frame(height: 96)
                 }
             }
         }
+        .ignoresSafeArea(.keyboard)
         .onTapGesture {
             focusedField = nil
         }
         .onOpenURL { url in
             GIDSignIn.sharedInstance.handle(url)
         }
+
     }
     
     // MARK: - Page 1: Welcome
@@ -188,135 +191,260 @@ struct OnboardingView: View {
     
     // MARK: - Page 4: Get Started
     
+    private var passwordsMatch: Bool {
+        !password.isEmpty && password == confirmPassword
+    }
+    
+    private var canSignUp: Bool {
+        !displayName.isEmpty && !email.isEmpty && password.count >= 6 && passwordsMatch && !isSigningIn
+    }
+    
     private var getStartedPage: some View {
-        VStack(spacing: 20) {
-            Spacer()
-            
-            FactumIcon(size: 80, color: FactumTheme.primaryText)
-            
-            Text("ready when you are")
-                .font(FactumTheme.titleFont)
-                .foregroundStyle(FactumTheme.primaryText)
-            
-            Text("sign in to keep your work safe")
-                .font(FactumTheme.bodyFont)
-                .foregroundStyle(FactumTheme.secondaryText)
-            
-            // Email + password fields
-            VStack(spacing: 12) {
-                TextField("Email", text: $email)
-                    .font(FactumTheme.bodyFont)
-                    .foregroundStyle(FactumTheme.primaryText)
-                    .keyboardType(.emailAddress)
-                    .textContentType(.oneTimeCode)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .focused($focusedField, equals: .email)
-                    .padding(14)
-                    .background(FactumTheme.cardBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
+        ScrollView {
+            VStack(spacing: 20) {
+                FactumIcon(size: 60, color: FactumTheme.primaryText)
+                    .padding(.top, 24)
                 
-                SecureField("Password", text: $password)
-                    .font(FactumTheme.bodyFont)
+                Text(isSignUpMode ? "create an account" : "ready when you are")
+                    .font(FactumTheme.titleFont)
                     .foregroundStyle(FactumTheme.primaryText)
-                    .textContentType(.oneTimeCode)
-                    .focused($focusedField, equals: .password)
-                    .padding(14)
-                    .background(FactumTheme.cardBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-            }
-            .padding(.horizontal, 24)
-            
-            // Sign in with email button
-            Button {
-                focusedField = nil
-                Task { await handleEmailSignIn() }
-            } label: {
-                HStack(spacing: 12) {
-                    if isSigningIn {
-                        ProgressView()
-                            .tint(FactumTheme.accentText)
-                    } else {
-                        Image(systemName: "envelope.fill")
-                            .font(.system(size: 18))
+                
+                Text(isSignUpMode ? "so your study sessions follow you" : "sign in to keep your work safe")
+                    .font(FactumTheme.bodyFont)
+                    .foregroundStyle(FactumTheme.secondaryText)
+                
+                // Sign In / Sign Up toggle
+                HStack(spacing: 0) {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            isSignUpMode = false
+                            signInError = nil
+                        }
+                    } label: {
+                        Text("Sign In")
+                            .font(FactumTheme.subheadlineFont)
+                            .foregroundStyle(isSignUpMode ? FactumTheme.secondaryText : FactumTheme.primaryText)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(isSignUpMode ? Color.clear : FactumTheme.accent)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
-                    Text("Sign In")
-                        .font(FactumTheme.subheadlineFont)
+                    
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            isSignUpMode = true
+                            signInError = nil
+                        }
+                    } label: {
+                        Text("Sign Up")
+                            .font(FactumTheme.subheadlineFont)
+                            .foregroundStyle(isSignUpMode ? FactumTheme.primaryText : FactumTheme.secondaryText)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(isSignUpMode ? FactumTheme.accent : Color.clear)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                    }
                 }
-                .foregroundStyle(FactumTheme.accentText)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
-                .background(
-                    (email.isEmpty || password.isEmpty || isSigningIn)
-                    ? FactumTheme.elevated
-                    : FactumTheme.accent
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-            }
-            .disabled(email.isEmpty || password.isEmpty || isSigningIn)
-            .padding(.horizontal, 24)
-            
-            // Divider
-            HStack {
-                Rectangle()
-                    .fill(FactumTheme.separator)
-                    .frame(height: 1)
-                Text("or")
-                    .font(FactumTheme.captionFont)
-                    .foregroundStyle(FactumTheme.tertiaryText)
-                Rectangle()
-                    .fill(FactumTheme.separator)
-                    .frame(height: 1)
-            }
-            .padding(.horizontal, 24)
-            
-            // Google Sign-In button
-            Button {
-                focusedField = nil
-                Task { await handleGoogleSignIn() }
-            } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: "g.circle.fill")
-                        .font(.system(size: 22))
-                    Text("Sign in with Google")
-                        .font(FactumTheme.subheadlineFont)
-                }
-                .foregroundStyle(FactumTheme.primaryText)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
+                .padding(4)
                 .background(FactumTheme.cardBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(FactumTheme.separator, lineWidth: 1)
-                )
-            }
-            .disabled(isSigningIn)
-            .padding(.horizontal, 24)
-            
-            if let signInError {
-                Text(signInError)
-                    .font(FactumTheme.captionFont)
-                    .foregroundStyle(FactumTheme.destructive)
-                    .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+                
+                // Form fields
+                VStack(spacing: 12) {
+                    if isSignUpMode {
+                        TextField("Display Name", text: $displayName)
+                            .font(FactumTheme.bodyFont)
+                            .foregroundStyle(FactumTheme.primaryText)
+                            .textContentType(.name)
+                            .autocorrectionDisabled()
+                            .focused($focusedField, equals: .name)
+                            .padding(14)
+                            .background(FactumTheme.cardBackground)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+                    
+                    TextField("Email", text: $email)
+                        .font(FactumTheme.bodyFont)
+                        .foregroundStyle(FactumTheme.primaryText)
+                        .keyboardType(.emailAddress)
+                        .textContentType(.emailAddress)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .focused($focusedField, equals: .email)
+                        .padding(14)
+                        .background(FactumTheme.cardBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    
+                    SecureField(isSignUpMode ? "Password (min 6 characters)" : "Password", text: $password)
+                        .font(FactumTheme.bodyFont)
+                        .foregroundStyle(FactumTheme.primaryText)
+                        .textContentType(isSignUpMode ? .newPassword : .password)
+                        .autocorrectionDisabled()
+                        .focused($focusedField, equals: .password)
+                        .padding(14)
+                        .background(FactumTheme.cardBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    
+                    if isSignUpMode {
+                        SecureField("Confirm Password", text: $confirmPassword)
+                            .font(FactumTheme.bodyFont)
+                            .foregroundStyle(FactumTheme.primaryText)
+                            .textContentType(.newPassword)
+                            .autocorrectionDisabled()
+                            .focused($focusedField, equals: .confirm)
+                            .padding(14)
+                            .background(FactumTheme.cardBackground)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                        
+                        if !confirmPassword.isEmpty && !passwordsMatch {
+                            Text("Passwords don't match")
+                                .font(FactumTheme.captionFont)
+                                .foregroundStyle(FactumTheme.destructive)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
+                .padding(.horizontal, 24)
+                
+                // Primary action button
+                if isSignUpMode {
+                    Button {
+                        focusedField = nil
+                        Task { await handleEmailSignUp() }
+                    } label: {
+                        HStack(spacing: 12) {
+                            if isSigningIn {
+                                ProgressView()
+                                    .tint(FactumTheme.accentText)
+                            }
+                            Text("Create Account")
+                                .font(FactumTheme.subheadlineFont)
+                        }
+                        .foregroundStyle(FactumTheme.accentText)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(canSignUp ? FactumTheme.accent : FactumTheme.elevated)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
+                    .disabled(!canSignUp)
                     .padding(.horizontal, 24)
+                } else {
+                    Button {
+                        focusedField = nil
+                        Task { await handleEmailSignIn() }
+                    } label: {
+                        HStack(spacing: 12) {
+                            if isSigningIn {
+                                ProgressView()
+                                    .tint(FactumTheme.accentText)
+                            } else {
+                                Image(systemName: "envelope.fill")
+                                    .font(.system(size: 18))
+                            }
+                            Text("Sign In")
+                                .font(FactumTheme.subheadlineFont)
+                        }
+                        .foregroundStyle(FactumTheme.accentText)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(
+                            (email.isEmpty || password.isEmpty || isSigningIn)
+                            ? FactumTheme.elevated
+                            : FactumTheme.accent
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
+                    .disabled(email.isEmpty || password.isEmpty || isSigningIn)
+                    .padding(.horizontal, 24)
+                }
+                
+                // Divider
+                HStack {
+                    Rectangle()
+                        .fill(FactumTheme.separator)
+                        .frame(height: 1)
+                    Text("or")
+                        .font(FactumTheme.captionFont)
+                        .foregroundStyle(FactumTheme.tertiaryText)
+                    Rectangle()
+                        .fill(FactumTheme.separator)
+                        .frame(height: 1)
+                }
+                .padding(.horizontal, 24)
+                
+                // Google button
+                Button {
+                    focusedField = nil
+                    if isSignUpMode {
+                        Task { await handleGoogleSignUp() }
+                    } else {
+                        Task { await handleGoogleSignIn() }
+                    }
+                } label: {
+                    HStack(spacing: 12) {
+                        GoogleGLogo(size: 20)
+                        Text(isSignUpMode ? "Sign up with Google" : "Sign in with Google")
+                            .font(FactumTheme.subheadlineFont)
+                    }
+                    .foregroundStyle(FactumTheme.primaryText)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(FactumTheme.cardBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .strokeBorder(FactumTheme.separator, lineWidth: 1)
+                    )
+                }
+                .disabled(isSigningIn)
+                .padding(.horizontal, 24)
+                
+                if let signInError {
+                    Text(signInError)
+                        .font(FactumTheme.captionFont)
+                        .foregroundStyle(FactumTheme.destructive)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
+                }
+                
+                if signUpSuccess {
+                    VStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 32))
+                            .foregroundStyle(.green)
+                        Text("Account created! Check your email to confirm, then sign in.")
+                            .font(FactumTheme.bodyFont)
+                            .foregroundStyle(FactumTheme.primaryText)
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding(16)
+                    .background(FactumTheme.cardBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .padding(.horizontal, 24)
+                }
+                
+                // Page indicator dots (inline on page 3)
+                HStack(spacing: 8) {
+                    ForEach(0..<4, id: \.self) { index in
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(index == currentPage ? FactumTheme.accent : FactumTheme.elevated)
+                            .frame(width: index == currentPage ? 24 : 8, height: 8)
+                    }
+                }
+                .padding(.top, 8)
+                
+                Spacer().frame(height: 40)
             }
-            
-            // Sign up link
-            Button {
-                showSignUp = true
-            } label: {
-                Text("Don't have an account? **Sign Up**")
-                    .font(FactumTheme.captionFont)
-                    .foregroundStyle(FactumTheme.secondaryText)
-            }
-            .padding(.top, 4)
-            
-            Spacer()
+            .padding(.bottom, 300)
         }
+        .scrollDismissesKeyboard(.interactively)
+        .scrollIndicators(.hidden)
         .padding(.horizontal, 8)
-        .sheet(isPresented: $showSignUp) {
-            SignUpView(onComplete: onComplete)
+        .sheet(isPresented: $showGoogleProfileSetup) {
+            GoogleProfileSetupView()
         }
     }
     
@@ -344,8 +472,52 @@ struct OnboardingView: View {
         do {
             try await AuthService.shared.signInWithGoogle()
             createLocalUserIfNeeded()
-            // Don't call onComplete() here — ContentView's onChange(of: authService.isSignedIn)
-            // handles dismissing onboarding when sign-in succeeds.
+        } catch {
+            signInError = error.localizedDescription
+        }
+        isSigningIn = false
+    }
+    
+    @MainActor
+    private func handleGoogleSignUp() async {
+        isSigningIn = true
+        signInError = nil
+        do {
+            try await AuthService.shared.signInWithGoogle()
+            createLocalUserIfNeeded()
+            // Show profile setup so the user can set display name + photo
+            showGoogleProfileSetup = true
+        } catch {
+            signInError = error.localizedDescription
+        }
+        isSigningIn = false
+    }
+    
+    @MainActor
+    private func handleEmailSignUp() async {
+        isSigningIn = true
+        signInError = nil
+        signUpSuccess = false
+        do {
+            try await AuthService.shared.signUpWithEmail(
+                email: email,
+                password: password,
+                displayName: displayName
+            )
+            
+            // If Supabase auto-confirms (no email verification required),
+            // the user is now signed in. Create the local profile and proceed.
+            if AuthService.shared.isSignedIn {
+                createLocalUserIfNeeded()
+                // ContentView's onChange handles dismissal
+            } else {
+                // Email confirmation required — show success message
+                signUpSuccess = true
+                // Switch back to sign-in mode so user can sign in after confirming
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    isSignUpMode = false
+                }
+            }
         } catch {
             signInError = error.localizedDescription
         }
@@ -438,7 +610,7 @@ struct SignUpView: View {
                         TextField("Display Name", text: $displayName)
                             .font(FactumTheme.bodyFont)
                             .foregroundStyle(FactumTheme.primaryText)
-                            .textContentType(.oneTimeCode)
+                            .textContentType(.init(rawValue: ""))
                             .focused($focusedField, equals: .name)
                             .padding(14)
                             .background(FactumTheme.cardBackground)
@@ -448,7 +620,7 @@ struct SignUpView: View {
                             .font(FactumTheme.bodyFont)
                             .foregroundStyle(FactumTheme.primaryText)
                             .keyboardType(.emailAddress)
-                            .textContentType(.oneTimeCode)
+                            .textContentType(.init(rawValue: ""))
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .focused($focusedField, equals: .email)
@@ -459,7 +631,7 @@ struct SignUpView: View {
                         SecureField("Password (min 6 characters)", text: $password)
                             .font(FactumTheme.bodyFont)
                             .foregroundStyle(FactumTheme.primaryText)
-                            .textContentType(.oneTimeCode)
+                            .textContentType(.init(rawValue: ""))
                             .focused($focusedField, equals: .password)
                             .padding(14)
                             .background(FactumTheme.cardBackground)
@@ -468,7 +640,7 @@ struct SignUpView: View {
                         SecureField("Confirm Password", text: $confirmPassword)
                             .font(FactumTheme.bodyFont)
                             .foregroundStyle(FactumTheme.primaryText)
-                            .textContentType(.oneTimeCode)
+                            .textContentType(.init(rawValue: ""))
                             .focused($focusedField, equals: .confirm)
                             .padding(14)
                             .background(FactumTheme.cardBackground)
@@ -595,6 +767,130 @@ struct SignUpView: View {
             bio: ""
         )
         modelContext.insert(profile)
+    }
+}
+
+// MARK: - Google G Logo
+
+struct GoogleGLogo: View {
+    var size: CGFloat = 20
+    
+    var body: some View {
+        Canvas { context, canvasSize in
+            let s = canvasSize.width
+            let center = CGPoint(x: s / 2, y: s / 2)
+            let radius = s * 0.45
+            let thickness = s * 0.18
+            
+            // Blue (right arc, ~5 o'clock to ~12 o'clock going clockwise from right)
+            drawArc(in: &context, center: center, radius: radius, thickness: thickness,
+                    startAngle: .degrees(-45), endAngle: .degrees(10), color: Color(red: 0.26, green: 0.52, blue: 0.96))
+            
+            // Green (bottom arc)
+            drawArc(in: &context, center: center, radius: radius, thickness: thickness,
+                    startAngle: .degrees(10), endAngle: .degrees(100), color: Color(red: 0.21, green: 0.71, blue: 0.29))
+            
+            // Yellow (left-bottom arc)
+            drawArc(in: &context, center: center, radius: radius, thickness: thickness,
+                    startAngle: .degrees(100), endAngle: .degrees(180), color: Color(red: 0.98, green: 0.74, blue: 0.02))
+            
+            // Red (top-left arc)
+            drawArc(in: &context, center: center, radius: radius, thickness: thickness,
+                    startAngle: .degrees(180), endAngle: .degrees(-45), color: Color(red: 0.92, green: 0.26, blue: 0.21))
+            
+            // Blue horizontal bar (the crossbar of the G)
+            let barHeight = thickness
+            let barLeft = center.x
+            let barRight = center.x + radius + thickness * 0.1
+            let barTop = center.y - barHeight / 2
+            let barRect = CGRect(x: barLeft, y: barTop, width: barRight - barLeft, height: barHeight)
+            context.fill(Path(barRect), with: .color(Color(red: 0.26, green: 0.52, blue: 0.96)))
+        }
+        .frame(width: size, height: size)
+    }
+    
+    private func drawArc(in context: inout GraphicsContext, center: CGPoint, radius: CGFloat, thickness: CGFloat,
+                          startAngle: Angle, endAngle: Angle, color: Color) {
+        var path = Path()
+        path.addArc(center: center, radius: radius, startAngle: startAngle, endAngle: endAngle, clockwise: false)
+        context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: thickness, lineCap: .butt))
+    }
+}
+
+// MARK: - Google Profile Setup (after Google Sign-Up)
+
+struct GoogleProfileSetupView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+    @Query private var users: [UserProfile]
+    @State private var editedName = ""
+    @State private var isSaving = false
+    
+    private var currentUser: UserProfile? {
+        let uid = AuthService.shared.currentUserID
+        return users.first { $0.firebaseUID == uid }
+    }
+    
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 24) {
+                Spacer()
+                
+                // Avatar
+                if let currentUser {
+                    avatarView(name: currentUser.displayName, size: 80, avatarURL: currentUser.avatarURL)
+                }
+                
+                Text("welcome to factum")
+                    .font(FactumTheme.titleFont)
+                    .foregroundStyle(FactumTheme.primaryText)
+                
+                Text("set your display name")
+                    .font(FactumTheme.bodyFont)
+                    .foregroundStyle(FactumTheme.secondaryText)
+                
+                TextField("Display Name", text: $editedName)
+                    .font(FactumTheme.bodyFont)
+                    .foregroundStyle(FactumTheme.primaryText)
+                    .textContentType(.name)
+                    .autocorrectionDisabled()
+                    .padding(14)
+                    .background(FactumTheme.cardBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .padding(.horizontal, 24)
+                
+                Button {
+                    let trimmed = editedName.trimmingCharacters(in: .whitespaces)
+                    if !trimmed.isEmpty {
+                        currentUser?.displayName = trimmed
+                    }
+                    dismiss()
+                } label: {
+                    Text("Continue")
+                        .font(FactumTheme.subheadlineFont)
+                        .foregroundStyle(FactumTheme.accentText)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                        .background(FactumTheme.accent)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                }
+                .padding(.horizontal, 24)
+                
+                Button("Skip") {
+                    dismiss()
+                }
+                .font(FactumTheme.captionFont)
+                .foregroundStyle(FactumTheme.tertiaryText)
+                
+                Spacer()
+            }
+            .background(FactumTheme.background)
+            .toolbar(.hidden, for: .navigationBar)
+        }
+        .presentationBackground(FactumTheme.background)
+        .onAppear {
+            editedName = currentUser?.displayName ?? ""
+        }
     }
 }
 

@@ -12,6 +12,7 @@ import AVKit
 struct FeedView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \StudyTimelapse.createdAt, order: .reverse) private var allTimelapses: [StudyTimelapse]
+    @Query private var users: [UserProfile]
     @State private var showingNewTimelapse = false
     
     private var timelapses: [StudyTimelapse] {
@@ -19,11 +20,31 @@ struct FeedView: View {
         return allTimelapses.filter { $0.authorID == uid }
     }
     
+    private var currentUser: UserProfile? {
+        let uid = AuthService.shared.currentUserID
+        return users.first { $0.firebaseUID == uid }
+    }
+    
+    private var greeting: String {
+        let hour = Calendar.current.component(.hour, from: Date())
+        switch hour {
+        case 5..<12: return "good morning"
+        case 12..<17: return "good afternoon"
+        case 17..<22: return "good evening"
+        default: return "burning the midnight oil"
+        }
+    }
+    
+    private var firstName: String {
+        let name = currentUser?.displayName ?? "Student"
+        return name.components(separatedBy: " ").first ?? name
+    }
+    
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
-                    // Scrollable logo header
+                    // Logo header
                     HStack(spacing: 8) {
                         FactumIcon(size: 24, color: FactumTheme.primaryText)
                         Text("factum")
@@ -33,6 +54,19 @@ struct FeedView: View {
                         Spacer()
                     }
                     .padding(.top, 8)
+                    
+                    // Greeting
+                    VStack(spacing: 4) {
+                        Text("\(greeting), \(firstName).")
+                            .font(FactumTheme.headlineFont)
+                            .foregroundStyle(FactumTheme.primaryText)
+                        
+                        Text(timelapses.isEmpty ? "ready to get to work?" : "here's your recent sessions.")
+                            .font(FactumTheme.bodyFont)
+                            .foregroundStyle(FactumTheme.secondaryText)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
                     
                     LazyVStack(spacing: 16) {
                         if timelapses.isEmpty {

@@ -23,6 +23,8 @@ struct ContentView: View {
     @Namespace private var tabBarNamespace
     /// 0 = system, 1 = light, 2 = dark
     @AppStorage("appearanceMode") private var appearanceMode: Int = 0
+    @AppStorage("hasSeenTutorial") private var hasSeenTutorial = false
+    @State private var showTutorial = false
     @Environment(\.colorScheme) private var colorScheme
     
     var body: some View {
@@ -45,6 +47,20 @@ struct ContentView: View {
                 customTabBar
                     .padding(.bottom, 2)
                     .padding(.horizontal, 2)
+                
+                // Tutorial coach marks overlay (shown once after first sign-in)
+                if showTutorial {
+                    TutorialOverlayView(
+                        isShowing: $showTutorial,
+                        selectedTab: $selectedTab
+                    )
+                    .zIndex(100)
+                    .onChange(of: showTutorial) { _, showing in
+                        if !showing {
+                            hasSeenTutorial = true
+                        }
+                    }
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -88,7 +104,13 @@ struct ContentView: View {
             if signedIn {
                 showOnboarding = false
                 hasResolvedAuth = true
-                Task { await syncFromCloud() }
+                Task {
+                    await syncFromCloud()
+                    if !hasSeenTutorial {
+                        try? await Task.sleep(for: .milliseconds(800))
+                        showTutorial = true
+                    }
+                }
             } else if !authService.isLoading {
                 showOnboarding = true
             }
@@ -214,9 +236,76 @@ struct ContentView: View {
             StudySubject.seedDefaultsIfNeeded(context: modelContext)
         }
         
-        // MVP: Timelapses stay local only — no cloud sync
+        // Sync timelapse session records from Supabase (restores study history)
+        print("[SYNC] Starting timelapse sync for uid: \(uid)")
+        await SupabaseService.shared.syncTimelapses(forUser: uid, context: modelContext)
+        
+        // Verify what we have locally after sync
+        let checkDescriptor = FetchDescriptor<StudyTimelapse>()
+        let allLocal = (try? modelContext.fetch(checkDescriptor)) ?? []
+        let userLocal = allLocal.filter { $0.authorID == uid }
+        print("[SYNC] After sync: \(allLocal.count) total local timelapses, \(userLocal.count) belong to current user (uid: \(uid))")
+        if let first = allLocal.first {
+            print("[SYNC] Sample timelapse authorID: '\(first.authorID)' vs currentUID: '\(uid)' match: \(first.authorID == uid)")
+        }
+        
+        // Recompute stats from all local timelapse records
+        recomputeStatsFromTimelapses(uid: uid)
         
         try? modelContext.save()
+    }
+    
+    /// Recompute totalStudyMinutes and streakDays from all local timelapse records.
+    @MainActor
+    private func recomputeStatsFromTimelapses(uid: String) {
+        let descriptor = FetchDescriptor<StudyTimelapse>()
+        let allTimelapses = (try? modelContext.fetch(descriptor)) ?? []
+        let userTimelapses = allTimelapses.filter { $0.authorID == uid }
+        guard !userTimelapses.isEmpty else { return }
+        
+        // Total study minutes
+        let totalMinutes = userTimelapses.reduce(0) { $0 + $1.durationSeconds } / 60
+        
+        // Streak: consecutive calendar days ending today or yesterday
+        let calendar = Calendar.current
+        let studyDates = Set(userTimelapses.map { calendar.startOfDay(for: $0.createdAt) })
+        let today = calendar.startOfDay(for: Date())
+        var checkDate = today
+        if !studyDates.contains(checkDate) {
+            checkDate = calendar.date(byAdding: .day, value: -1, to: checkDate)!
+            if !studyDates.contains(checkDate) {
+                // No study today or yesterday — streak is 0
+                updateProfileStats(uid: uid, minutes: totalMinutes, streak: 0)
+                return
+            }
+        }
+        var streak = 0
+        while studyDates.contains(checkDate) {
+            streak += 1
+            checkDate = calendar.date(byAdding: .day, value: -1, to: checkDate)!
+        }
+        
+        updateProfileStats(uid: uid, minutes: totalMinutes, streak: streak)
+    }
+    
+    @MainActor
+    private func updateProfileStats(uid: String, minutes: Int, streak: Int) {
+        let descriptor = FetchDescriptor<UserProfile>(predicate: #Predicate { $0.firebaseUID == uid })
+        guard let profile = try? modelContext.fetch(descriptor).first else { return }
+        
+        // Only ever increase — keep max of computed vs stored
+        let newMinutes = max(profile.totalStudyMinutes, minutes)
+        let newStreak = max(profile.streakDays, streak)
+        
+        if profile.totalStudyMinutes != newMinutes || profile.streakDays != newStreak {
+            profile.totalStudyMinutes = newMinutes
+            profile.streakDays = newStreak
+            print("[SYNC] Stats recomputed from timelapses: \(newMinutes) min, \(newStreak) day streak")
+            
+            Task {
+                try? await SupabaseService.shared.saveUserProfile(profile)
+            }
+        }
     }
 }
 
