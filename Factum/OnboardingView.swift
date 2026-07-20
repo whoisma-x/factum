@@ -35,8 +35,6 @@ struct OnboardingView: View {
             FactumTheme.background.ignoresSafeArea()
             
             VStack(spacing: 0) {
-                Spacer()
-                
                 // Pages
                 TabView(selection: $currentPage) {
                     welcomePage.tag(0)
@@ -45,9 +43,10 @@ struct OnboardingView: View {
                     getStartedPage.tag(3)
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
+                .animation(.easeInOut(duration: 0.35), value: currentPage)
                 
-                // Page indicator + bottom button (only on pages 0–2)
-                if currentPage < 3 {
+                // Page indicator + bottom button — always present for stable layout, fades on page 3
+                VStack(spacing: 0) {
                     HStack(spacing: 8) {
                         ForEach(0..<4, id: \.self) { index in
                             RoundedRectangle(cornerRadius: 3)
@@ -59,7 +58,7 @@ struct OnboardingView: View {
                     .padding(.bottom, 32)
                     
                     Button {
-                        withAnimation {
+                        withAnimation(.easeInOut(duration: 0.35)) {
                             currentPage += 1
                         }
                     } label: {
@@ -75,6 +74,9 @@ struct OnboardingView: View {
                     .padding(.horizontal, 24)
                     .padding(.bottom, 40)
                 }
+                .opacity(currentPage < 3 ? 1 : 0)
+                .animation(.easeInOut(duration: 0.3), value: currentPage)
+                .allowsHitTesting(currentPage < 3)
             }
         }
         .ignoresSafeArea(.keyboard)
@@ -772,48 +774,90 @@ struct SignUpView: View {
 
 // MARK: - Google G Logo
 
+/// Google "G" logo traced from the official SVG (viewBox 0 0 48 48), scaled to any size.
 struct GoogleGLogo: View {
     var size: CGFloat = 20
     
+    private let blue  = Color(red: 66/255,  green: 133/255, blue: 244/255)
+    private let red   = Color(red: 219/255, green: 68/255,  blue: 55/255)
+    private let yellow = Color(red: 244/255, green: 180/255, blue: 0/255)
+    private let green = Color(red: 15/255,  green: 157/255, blue: 88/255)
+    
     var body: some View {
-        Canvas { context, canvasSize in
-            let s = canvasSize.width
-            let center = CGPoint(x: s / 2, y: s / 2)
-            let radius = s * 0.45
-            let thickness = s * 0.18
+        Canvas { ctx, sz in
+            let s = sz.width / 48  // scale factor from 48×48 viewBox
             
-            // Blue (right arc, ~5 o'clock to ~12 o'clock going clockwise from right)
-            drawArc(in: &context, center: center, radius: radius, thickness: thickness,
-                    startAngle: .degrees(-45), endAngle: .degrees(10), color: Color(red: 0.26, green: 0.52, blue: 0.96))
+            // Blue: full G outline (fills everything, other colors overlay on top)
+            var bp = Path()
+            bp.move(to: pt(43.611, 20.083, s))
+            bp.addLine(to: pt(43.611, 23.917, s))
+            bp.addCurve(to: pt(24, 43.5, s),
+                        control1: pt(43.0, 34.167, s), control2: pt(34.833, 43.5, s))
+            bp.addCurve(to: pt(4.5, 24, s),
+                        control1: pt(13.167, 43.5, s), control2: pt(4.5, 34.833, s))
+            bp.addCurve(to: pt(24, 4.5, s),
+                        control1: pt(4.5, 13.167, s), control2: pt(13.167, 4.5, s))
+            bp.addCurve(to: pt(34.833, 9.167, s),
+                        control1: pt(29.5, 4.5, s), control2: pt(32.667, 6.083, s))
+            bp.addLine(to: pt(29.917, 14.083, s))
+            bp.addCurve(to: pt(24, 11.5, s),
+                        control1: pt(28.333, 12.5, s), control2: pt(26.25, 11.5, s))
+            bp.addCurve(to: pt(11.5, 24, s),
+                        control1: pt(17.083, 11.5, s), control2: pt(11.5, 17.083, s))
+            bp.addCurve(to: pt(24, 36.5, s),
+                        control1: pt(11.5, 30.917, s), control2: pt(17.083, 36.5, s))
+            bp.addCurve(to: pt(35, 27.5, s),
+                        control1: pt(31.417, 36.5, s), control2: pt(34.167, 32.833, s))
+            bp.addLine(to: pt(24, 27.5, s))
+            bp.addLine(to: pt(24, 20.083, s))
+            bp.closeSubpath()
+            ctx.fill(bp, with: .color(blue))
             
-            // Green (bottom arc)
-            drawArc(in: &context, center: center, radius: radius, thickness: thickness,
-                    startAngle: .degrees(10), endAngle: .degrees(100), color: Color(red: 0.21, green: 0.71, blue: 0.29))
+            // Red: top-left arc (outer + inner ring, left-top quadrant)
+            var rp = Path()
+            rp.move(to: pt(4.5, 24, s))
+            rp.addCurve(to: pt(24, 4.5, s),
+                        control1: pt(4.5, 13.167, s), control2: pt(13.167, 4.5, s))
+            rp.addCurve(to: pt(34.833, 9.167, s),
+                        control1: pt(29.5, 4.5, s), control2: pt(32.667, 6.083, s))
+            rp.addLine(to: pt(29.917, 14.083, s))
+            rp.addCurve(to: pt(24, 11.5, s),
+                        control1: pt(28.333, 12.5, s), control2: pt(26.25, 11.5, s))
+            rp.addCurve(to: pt(11.5, 24, s),
+                        control1: pt(17.083, 11.5, s), control2: pt(11.5, 17.083, s))
+            rp.closeSubpath()
+            ctx.fill(rp, with: .color(red))
             
-            // Yellow (left-bottom arc)
-            drawArc(in: &context, center: center, radius: radius, thickness: thickness,
-                    startAngle: .degrees(100), endAngle: .degrees(180), color: Color(red: 0.98, green: 0.74, blue: 0.02))
+            // Yellow: bottom-left arc
+            var yp = Path()
+            yp.move(to: pt(4.5, 24, s))
+            yp.addCurve(to: pt(24, 43.5, s),
+                        control1: pt(4.5, 34.833, s), control2: pt(13.167, 43.5, s))
+            yp.addLine(to: pt(24, 36.5, s))
+            yp.addCurve(to: pt(11.5, 24, s),
+                        control1: pt(17.083, 36.5, s), control2: pt(11.5, 30.917, s))
+            yp.closeSubpath()
+            ctx.fill(yp, with: .color(yellow))
             
-            // Red (top-left arc)
-            drawArc(in: &context, center: center, radius: radius, thickness: thickness,
-                    startAngle: .degrees(180), endAngle: .degrees(-45), color: Color(red: 0.92, green: 0.26, blue: 0.21))
-            
-            // Blue horizontal bar (the crossbar of the G)
-            let barHeight = thickness
-            let barLeft = center.x
-            let barRight = center.x + radius + thickness * 0.1
-            let barTop = center.y - barHeight / 2
-            let barRect = CGRect(x: barLeft, y: barTop, width: barRight - barLeft, height: barHeight)
-            context.fill(Path(barRect), with: .color(Color(red: 0.26, green: 0.52, blue: 0.96)))
+            // Green: bottom-right arc
+            var gp = Path()
+            gp.move(to: pt(43.611, 23.917, s))
+            gp.addCurve(to: pt(24, 43.5, s),
+                        control1: pt(43.0, 34.167, s), control2: pt(34.833, 43.5, s))
+            gp.addLine(to: pt(24, 36.5, s))
+            gp.addCurve(to: pt(35, 27.5, s),
+                        control1: pt(31.417, 36.5, s), control2: pt(34.167, 32.833, s))
+            gp.addLine(to: pt(24, 27.5, s))
+            gp.addLine(to: pt(24, 20.083, s))
+            gp.addLine(to: pt(43.611, 20.083, s))
+            gp.closeSubpath()
+            ctx.fill(gp, with: .color(green))
         }
         .frame(width: size, height: size)
     }
     
-    private func drawArc(in context: inout GraphicsContext, center: CGPoint, radius: CGFloat, thickness: CGFloat,
-                          startAngle: Angle, endAngle: Angle, color: Color) {
-        var path = Path()
-        path.addArc(center: center, radius: radius, startAngle: startAngle, endAngle: endAngle, clockwise: false)
-        context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: thickness, lineCap: .butt))
+    private func pt(_ x: CGFloat, _ y: CGFloat, _ s: CGFloat) -> CGPoint {
+        CGPoint(x: x * s, y: y * s)
     }
 }
 
