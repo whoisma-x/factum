@@ -587,9 +587,16 @@ final class SupabaseService {
                 profile.email = row.email
                 profile.bio = row.bio
                 if let avatar = row.avatarUrl { profile.avatarURL = avatar }
-                profile.totalStudyMinutes = row.totalStudyMinutes
-                profile.streakDays = row.streakDays
+                // Stats only ever increase — keep the higher value between local and cloud
+                profile.totalStudyMinutes = max(profile.totalStudyMinutes, row.totalStudyMinutes)
+                profile.streakDays = max(profile.streakDays, row.streakDays)
                 profile.friendUIDs = row.friendUids
+                
+                // If local stats were higher, push them back to Supabase
+                if profile.totalStudyMinutes > row.totalStudyMinutes || profile.streakDays > row.streakDays {
+                    try? await saveUserProfile(profile)
+                    print("[SYNC] Local stats were higher — pushed to Supabase")
+                }
             }
             print("[SYNC] Updated existing local profile: \(profile.displayName)")
         } else {

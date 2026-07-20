@@ -310,98 +310,24 @@ struct PostCaptionView: View {
         // Save locally
         try? modelContext.save()
         
-        // Capture all values needed for background upload before dismissing
-        let timelapseID = timelapse.id
-        let capturedUID = uid
+        // Capture values needed for background tasks
         let capturedVideoURL = videoURL
-        let capturedThumbnailData = thumbnailData
         let capturedSubjectName = selectedSubjectName
         let capturedCaption = caption
         let capturedTimelapse = timelapse
+        let capturedUser = users.first(where: { $0.firebaseUID == uid })
         let ctx = modelContext
         
-        // Build a snapshot of the row for Supabase (captures all values on main actor)
-        let authorName = timelapse.authorName
-        let authorAvatarURL = timelapse.authorAvatarURL
-        let captionText = timelapse.caption
-        let descText = timelapse.studyDescription
-        let subject = timelapse.subject
-        let duration = timelapse.durationSeconds
-        let createdAt = timelapse.createdAt
-        let landscape = timelapse.isLandscape
+        // MVP: Cloud upload disabled — video and thumbnail stay local only.
+        // Sync updated user stats to Supabase (totalStudyMinutes was just incremented)
+        Task {
+            if let user = capturedUser {
+                try? await SupabaseService.shared.saveUserProfile(user)
+            }
+        }
         
+        // Google Photos backup (optional, user-controlled — independent of Supabase)
         Task.detached {
-            var videoDownloadURLResult: String?
-            var thumbDownloadURLResult: String?
-            
-            // Upload video to Supabase Storage
-            if let videoURL = capturedVideoURL {
-                do {
-                    videoDownloadURLResult = try await StorageService.shared.uploadVideo(
-                        localURL: videoURL,
-                        userUID: capturedUID,
-                        timelapseID: timelapseID.uuidString
-                    )
-                    await MainActor.run {
-                        capturedTimelapse.videoDownloadURL = videoDownloadURLResult
-                    }
-                    print("[SYNC] Video uploaded to Supabase Storage")
-                } catch {
-                    print("[SYNC] Video upload failed: \(error.localizedDescription)")
-                }
-            }
-            
-            // Upload thumbnail to Supabase Storage
-            if let thumbData = capturedThumbnailData {
-                do {
-                    thumbDownloadURLResult = try await StorageService.shared.uploadThumbnail(
-                        data: thumbData,
-                        userUID: capturedUID,
-                        timelapseID: timelapseID.uuidString
-                    )
-                    await MainActor.run {
-                        capturedTimelapse.thumbnailDownloadURL = thumbDownloadURLResult
-                    }
-                    print("[SYNC] Thumbnail uploaded to Supabase Storage")
-                } catch {
-                    print("[SYNC] Thumbnail upload failed: \(error.localizedDescription)")
-                }
-            }
-            
-            // Build the row with captured values + upload URLs (no @Model access)
-            guard let authorUUID = UUID(uuidString: capturedUID) else { return }
-            let row = TimelapseRow(
-                id: timelapseID,
-                authorId: authorUUID,
-                authorName: authorName,
-                authorAvatarUrl: authorAvatarURL,
-                caption: captionText,
-                studyDescription: descText,
-                subject: subject,
-                durationSeconds: duration,
-                createdAt: createdAt,
-                isLandscape: landscape,
-                likeCount: 0,
-                likedByUids: [],
-                commentCount: 0,
-                videoDownloadUrl: videoDownloadURLResult,
-                thumbnailDownloadUrl: thumbDownloadURLResult
-            )
-            
-            // Save timelapse to Supabase using the row directly
-            do {
-                try await SupabaseService.shared.saveTimelapseRow(row)
-                print("[SYNC] Timelapse saved to Supabase")
-            } catch {
-                print("[SYNC] Supabase save failed: \(error.localizedDescription)")
-            }
-            
-            // Save updated URLs locally
-            await MainActor.run {
-                try? ctx.save()
-            }
-            
-            // Google Photos backup
             if GooglePhotosService.shared.isBackupEnabled, let videoURL = capturedVideoURL {
                 do {
                     let fileName = videoURL.lastPathComponent

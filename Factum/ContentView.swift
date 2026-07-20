@@ -214,8 +214,7 @@ struct ContentView: View {
             StudySubject.seedDefaultsIfNeeded(context: modelContext)
         }
         
-        // Sync timelapses from Supabase (includes comments)
-        await SupabaseService.shared.syncTimelapses(forUser: uid, context: modelContext)
+        // MVP: Timelapses stay local only — no cloud sync
         
         try? modelContext.save()
     }

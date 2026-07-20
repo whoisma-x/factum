@@ -100,13 +100,15 @@ struct ProfileView: View {
                 SettingsView()
             }
             .task {
-                // Sync computed stats to user model and Firestore
+                // Sync computed stats to user model and Supabase
                 guard let user = currentUser else { return }
                 let newMinutes = computedTotalStudyMinutes
                 let newStreak = computedStreakDays
                 if user.totalStudyMinutes != newMinutes || user.streakDays != newStreak {
                     user.totalStudyMinutes = newMinutes
                     user.streakDays = newStreak
+                    // Sync updated stats to Supabase
+                    try? await SupabaseService.shared.saveUserProfile(user)
                 }
             }
         }
@@ -498,13 +500,18 @@ struct EditProfileView: View {
                         user.displayName = displayName
                         user.bio = bio
                         
-                        // Save avatar locally
+                        // Save avatar locally (MVP: no cloud upload)
                         if let avatarImageData {
                             let fileName = "avatar_\(user.firebaseUID ?? user.id.uuidString).jpg"
                             let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
                             let avatarPath = docs.appendingPathComponent(fileName)
                             try? avatarImageData.write(to: avatarPath)
                             user.avatarURL = avatarPath.absoluteString
+                        }
+                        
+                        // Sync profile changes to Supabase
+                        Task {
+                            try? await SupabaseService.shared.saveUserProfile(user)
                         }
                         
                         dismiss()
@@ -530,12 +537,18 @@ struct EditProfileView: View {
 
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
+    @Query private var users: [UserProfile]
     @State private var googlePhotosBackup = GooglePhotosService.shared.isBackupEnabled
     @State private var isRequestingScope = false
     @State private var showScopeError = false
     @State private var scopeErrorMessage = ""
     /// 0 = system, 1 = light, 2 = dark
     @AppStorage("appearanceMode") private var appearanceMode: Int = 2
+    
+    private var currentUser: UserProfile? {
+        let uid = AuthService.shared.currentUserID
+        return users.first { $0.firebaseUID == uid }
+    }
     
     var body: some View {
         NavigationStack {
@@ -637,6 +650,10 @@ struct SettingsView: View {
                 Section {
                     Button {
                         Task {
+                            // Save current stats to Supabase before signing out
+                            if let user = currentUser {
+                                try? await SupabaseService.shared.saveUserProfile(user)
+                            }
                             try? await AuthService.shared.signOut()
                             dismiss()
                         }

@@ -246,16 +246,7 @@ struct TimelapseCardView: View {
                         timelapse.likedByUIDs.removeAll { $0 == uid }
                         timelapse.likeCount = max(0, timelapse.likeCount - 1)
                     }
-                    // Sync to Supabase
-                    let timelapseID = timelapse.id.uuidString
-                    let liked = isLiked
-                    Task {
-                        try? await SupabaseService.shared.toggleLike(
-                            timelapseID: timelapseID,
-                            userUID: uid,
-                            isLiked: liked
-                        )
-                    }
+                    // MVP: Likes stay local only
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: isLiked ? "heart.fill" : "heart")
@@ -327,10 +318,7 @@ struct TimelapseCardView: View {
         // Delete from SwiftData
         modelContext.delete(timelapse)
         
-        // Delete from Supabase cloud
-        Task {
-            try? await SupabaseService.shared.deleteTimelapse(timelapseID)
-        }
+        // MVP: Delete is local only
     }
     
     private func setupCardPlayer() {
@@ -448,16 +436,7 @@ struct TimelapseDetailView: View {
                                 timelapse.likedByUIDs.removeAll { $0 == uid }
                                 timelapse.likeCount = max(0, timelapse.likeCount - 1)
                             }
-                            // Sync to Supabase
-                            let timelapseID = timelapse.id.uuidString
-                            let liked = isLiked
-                            Task {
-                                try? await SupabaseService.shared.toggleLike(
-                                    timelapseID: timelapseID,
-                                    userUID: uid,
-                                    isLiked: liked
-                                )
-                            }
+                            // MVP: Likes stay local only
                         } label: {
                             HStack(spacing: 6) {
                                 Image(systemName: isLiked ? "heart.fill" : "heart")
@@ -519,24 +498,7 @@ struct TimelapseDetailView: View {
                             )
                             modelContext.insert(comment)
                             timelapse.commentCount += 1
-                            // Capture values on main actor before background task
-                            let commentID = comment.id
-                            let commentTimelapseID = comment.timelapseID
-                            let commentAuthorID = comment.authorID
-                            let commentAuthorName = comment.authorName
-                            let commentText = comment.text
-                            let commentCreatedAt = comment.createdAt
-                            Task {
-                                let row = SupaCommentRow(
-                                    id: commentID,
-                                    timelapseId: commentTimelapseID,
-                                    authorId: commentAuthorID,
-                                    authorName: commentAuthorName,
-                                    text: commentText,
-                                    createdAt: commentCreatedAt
-                                )
-                                try? await SupabaseService.shared.saveCommentRow(row)
-                            }
+                            // MVP: Comments stay local only
                             newComment = ""
                         } label: {
                             Image(systemName: "arrow.up.circle.fill")
