@@ -417,7 +417,7 @@ struct OnboardingView: View {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.system(size: 32))
                             .foregroundStyle(.green)
-                        Text("Account created! Check your email to confirm, then sign in.")
+                        Text("Account created! You're all set.")
                             .font(FactumTheme.bodyFont)
                             .foregroundStyle(FactumTheme.primaryText)
                             .multilineTextAlignment(.center)
@@ -440,7 +440,8 @@ struct OnboardingView: View {
                 
                 Spacer().frame(height: 40)
             }
-            .padding(.bottom, 300)
+            .padding(.bottom, focusedField != nil ? 300 : 0)
+            .animation(.easeInOut(duration: 0.25), value: focusedField)
         }
         .scrollDismissesKeyboard(.interactively)
         .scrollIndicators(.hidden)
@@ -507,19 +508,11 @@ struct OnboardingView: View {
                 displayName: displayName
             )
             
-            // If Supabase auto-confirms (no email verification required),
-            // the user is now signed in. Create the local profile and proceed.
-            if AuthService.shared.isSignedIn {
-                createLocalUserIfNeeded()
-                // ContentView's onChange handles dismissal
-            } else {
-                // Email confirmation required — show success message
-                signUpSuccess = true
-                // Switch back to sign-in mode so user can sign in after confirming
-                withAnimation(.easeInOut(duration: 0.25)) {
-                    isSignUpMode = false
-                }
+            // Auto sign-in after sign-up
+            if !AuthService.shared.isSignedIn {
+                try await AuthService.shared.signInWithEmail(email: email, password: password)
             }
+            createLocalUserIfNeeded()
         } catch {
             signInError = error.localizedDescription
         }
@@ -693,7 +686,7 @@ struct SignUpView: View {
                             Image(systemName: "checkmark.circle.fill")
                                 .font(.system(size: 32))
                                 .foregroundStyle(.green)
-                            Text("Account created! Check your email to confirm, then sign in.")
+                            Text("Account created! You're all set.")
                                 .font(FactumTheme.bodyFont)
                                 .foregroundStyle(FactumTheme.primaryText)
                                 .multilineTextAlignment(.center)
@@ -736,16 +729,13 @@ struct SignUpView: View {
                 displayName: displayName
             )
             
-            // If Supabase auto-confirms (no email verification required),
-            // the user is now signed in. Create the local profile and proceed.
-            if AuthService.shared.isSignedIn {
-                createLocalUserIfNeeded()
-                dismiss()
-                onComplete()
-            } else {
-                // Email confirmation required — show success message
-                signUpSuccess = true
+            // Auto sign-in after sign-up
+            if !AuthService.shared.isSignedIn {
+                try await AuthService.shared.signInWithEmail(email: email, password: password)
             }
+            createLocalUserIfNeeded()
+            dismiss()
+            onComplete()
         } catch {
             signUpError = error.localizedDescription
         }
@@ -778,86 +768,11 @@ struct SignUpView: View {
 struct GoogleGLogo: View {
     var size: CGFloat = 20
     
-    private let blue  = Color(red: 66/255,  green: 133/255, blue: 244/255)
-    private let red   = Color(red: 219/255, green: 68/255,  blue: 55/255)
-    private let yellow = Color(red: 244/255, green: 180/255, blue: 0/255)
-    private let green = Color(red: 15/255,  green: 157/255, blue: 88/255)
-    
     var body: some View {
-        Canvas { ctx, sz in
-            let s = sz.width / 48  // scale factor from 48×48 viewBox
-            
-            // Blue: full G outline (fills everything, other colors overlay on top)
-            var bp = Path()
-            bp.move(to: pt(43.611, 20.083, s))
-            bp.addLine(to: pt(43.611, 23.917, s))
-            bp.addCurve(to: pt(24, 43.5, s),
-                        control1: pt(43.0, 34.167, s), control2: pt(34.833, 43.5, s))
-            bp.addCurve(to: pt(4.5, 24, s),
-                        control1: pt(13.167, 43.5, s), control2: pt(4.5, 34.833, s))
-            bp.addCurve(to: pt(24, 4.5, s),
-                        control1: pt(4.5, 13.167, s), control2: pt(13.167, 4.5, s))
-            bp.addCurve(to: pt(34.833, 9.167, s),
-                        control1: pt(29.5, 4.5, s), control2: pt(32.667, 6.083, s))
-            bp.addLine(to: pt(29.917, 14.083, s))
-            bp.addCurve(to: pt(24, 11.5, s),
-                        control1: pt(28.333, 12.5, s), control2: pt(26.25, 11.5, s))
-            bp.addCurve(to: pt(11.5, 24, s),
-                        control1: pt(17.083, 11.5, s), control2: pt(11.5, 17.083, s))
-            bp.addCurve(to: pt(24, 36.5, s),
-                        control1: pt(11.5, 30.917, s), control2: pt(17.083, 36.5, s))
-            bp.addCurve(to: pt(35, 27.5, s),
-                        control1: pt(31.417, 36.5, s), control2: pt(34.167, 32.833, s))
-            bp.addLine(to: pt(24, 27.5, s))
-            bp.addLine(to: pt(24, 20.083, s))
-            bp.closeSubpath()
-            ctx.fill(bp, with: .color(blue))
-            
-            // Red: top-left arc (outer + inner ring, left-top quadrant)
-            var rp = Path()
-            rp.move(to: pt(4.5, 24, s))
-            rp.addCurve(to: pt(24, 4.5, s),
-                        control1: pt(4.5, 13.167, s), control2: pt(13.167, 4.5, s))
-            rp.addCurve(to: pt(34.833, 9.167, s),
-                        control1: pt(29.5, 4.5, s), control2: pt(32.667, 6.083, s))
-            rp.addLine(to: pt(29.917, 14.083, s))
-            rp.addCurve(to: pt(24, 11.5, s),
-                        control1: pt(28.333, 12.5, s), control2: pt(26.25, 11.5, s))
-            rp.addCurve(to: pt(11.5, 24, s),
-                        control1: pt(17.083, 11.5, s), control2: pt(11.5, 17.083, s))
-            rp.closeSubpath()
-            ctx.fill(rp, with: .color(red))
-            
-            // Yellow: bottom-left arc
-            var yp = Path()
-            yp.move(to: pt(4.5, 24, s))
-            yp.addCurve(to: pt(24, 43.5, s),
-                        control1: pt(4.5, 34.833, s), control2: pt(13.167, 43.5, s))
-            yp.addLine(to: pt(24, 36.5, s))
-            yp.addCurve(to: pt(11.5, 24, s),
-                        control1: pt(17.083, 36.5, s), control2: pt(11.5, 30.917, s))
-            yp.closeSubpath()
-            ctx.fill(yp, with: .color(yellow))
-            
-            // Green: bottom-right arc
-            var gp = Path()
-            gp.move(to: pt(43.611, 23.917, s))
-            gp.addCurve(to: pt(24, 43.5, s),
-                        control1: pt(43.0, 34.167, s), control2: pt(34.833, 43.5, s))
-            gp.addLine(to: pt(24, 36.5, s))
-            gp.addCurve(to: pt(35, 27.5, s),
-                        control1: pt(31.417, 36.5, s), control2: pt(34.167, 32.833, s))
-            gp.addLine(to: pt(24, 27.5, s))
-            gp.addLine(to: pt(24, 20.083, s))
-            gp.addLine(to: pt(43.611, 20.083, s))
-            gp.closeSubpath()
-            ctx.fill(gp, with: .color(green))
-        }
-        .frame(width: size, height: size)
-    }
-    
-    private func pt(_ x: CGFloat, _ y: CGFloat, _ s: CGFloat) -> CGPoint {
-        CGPoint(x: x * s, y: y * s)
+        Image("GoogleLogo")
+            .resizable()
+            .scaledToFit()
+            .frame(width: size, height: size)
     }
 }
 

@@ -46,7 +46,7 @@ struct ContentView: View {
                 // Floating Liquid Glass tab bar
                 customTabBar
                     .padding(.bottom, 2)
-                    .padding(.horizontal, 2)
+                    .padding(.horizontal, 16)
                 
                 // Tutorial coach marks overlay (shown once after first sign-in)
                 if showTutorial {
