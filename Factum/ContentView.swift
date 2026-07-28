@@ -25,7 +25,7 @@ struct ContentView: View {
     @AppStorage("appearanceMode") private var appearanceMode: Int = 0
     @AppStorage("hasSeenTutorial") private var hasSeenTutorial = false
     @State private var showTutorial = false
-    @Environment(\.colorScheme) private var colorScheme
+    @State private var tabBarFrame: CGRect = .zero
     
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -45,6 +45,17 @@ struct ContentView: View {
                 
                 // Floating Liquid Glass tab bar
                 customTabBar
+                    .overlay(
+                        GeometryReader { geo in
+                            Color.clear
+                                .onAppear {
+                                    tabBarFrame = geo.frame(in: .global)
+                                }
+                                .onChange(of: geo.size) {
+                                    tabBarFrame = geo.frame(in: .global)
+                                }
+                        }
+                    )
                     .padding(.bottom, 2)
                     .padding(.horizontal, 16)
                 
@@ -52,7 +63,8 @@ struct ContentView: View {
                 if showTutorial {
                     TutorialOverlayView(
                         isShowing: $showTutorial,
-                        selectedTab: $selectedTab
+                        selectedTab: $selectedTab,
+                        tabBarFrame: tabBarFrame
                     )
                     .zIndex(100)
                     .onChange(of: showTutorial) { _, showing in
@@ -66,7 +78,6 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(FactumTheme.background)
         .preferredColorScheme(appearanceMode == 0 ? nil : (appearanceMode == 1 ? .light : .dark))
-        .animation(.easeInOut(duration: 0.3), value: colorScheme)
         .fullScreenCover(isPresented: $showCamera) {
             TimelapseCameraView()
         }
@@ -135,7 +146,7 @@ struct ContentView: View {
         ("house.fill", 0),
         ("person.2.fill", 1),
         ("video.fill", 2),       // Record (center)
-        ("person.3.fill", 3),
+        ("bubble.left.and.bubble.right.fill", 3),
         ("person.circle.fill", 4),
     ]
     

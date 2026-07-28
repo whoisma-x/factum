@@ -35,15 +35,16 @@ struct ProfileView: View {
                     // Scrollable title row
                     HStack {
                         Text("Profile")
-                            .font(FactumTheme.titleFont)
+                            .font(FactumTheme.font(30, weight: .semibold))
                             .foregroundStyle(FactumTheme.primaryText)
                         Spacer()
                         Button {
                             showSettings = true
                         } label: {
                             Image(systemName: "gearshape")
-                                .font(.system(size: 16))
+                                .font(.system(size: 20))
                                 .foregroundStyle(FactumTheme.secondaryText)
+                                .frame(width: 44, height: 44)
                         }
                     }
                     .padding(.top, 8)
@@ -145,9 +146,9 @@ struct ProfileView: View {
                     showEditProfile = true
                 } label: {
                     Image(systemName: "pencil")
-                        .font(.system(size: 14))
+                        .font(.system(size: 17))
                         .foregroundStyle(FactumTheme.secondaryText)
-                        .padding(10)
+                        .padding(12)
                         .background(FactumTheme.cardBackground)
                         .clipShape(Circle())
                 }
@@ -458,6 +459,7 @@ struct EditProfileView: View {
                     TextField("Your name", text: $displayName)
                         .font(FactumTheme.bodyFont)
                         .foregroundStyle(FactumTheme.primaryText)
+                        .tint(FactumTheme.primaryText)
                         .padding(14)
                         .background(FactumTheme.cardBackground)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -542,8 +544,8 @@ struct SettingsView: View {
     @State private var isRequestingScope = false
     @State private var showScopeError = false
     @State private var scopeErrorMessage = ""
-    /// 0 = system, 1 = light, 2 = dark
-    @AppStorage("appearanceMode") private var appearanceMode: Int = 2
+    /// 1 = light, 2 = dark
+    @AppStorage("appearanceMode") private var appearanceMode: Int = 0
     
     private var currentUser: UserProfile? {
         let uid = AuthService.shared.currentUserID
@@ -554,15 +556,24 @@ struct SettingsView: View {
         NavigationStack {
             List {
                 Section {
-                    settingsRow(icon: "bell.fill", title: "Notifications")
-                    settingsRow(icon: "lock.fill", title: "Privacy")
+                    NavigationLink {
+                        SettingsPlaceholderView(title: "Notifications")
+                    } label: {
+                        settingsRow(icon: "bell.fill", title: "Notifications")
+                    }
+                    .listRowBackground(FactumTheme.cardBackground)
+                    NavigationLink {
+                        SettingsPlaceholderView(title: "Privacy")
+                    } label: {
+                        settingsRow(icon: "lock.fill", title: "Privacy")
+                    }
+                    .listRowBackground(FactumTheme.cardBackground)
 
                     HStack(spacing: 12) {
                         Image(systemName: "paintbrush.fill")
                             .foregroundStyle(FactumTheme.secondaryText)
                             .frame(width: 24)
                         Picker("Appearance", selection: $appearanceMode) {
-                            Text("System").tag(0)
                             Text("Light").tag(1)
                             Text("Dark").tag(2)
                         }
@@ -639,8 +650,18 @@ struct SettingsView: View {
                 }
                 
                 Section {
-                    settingsRow(icon: "questionmark.circle.fill", title: "Help & Support")
-                    settingsRow(icon: "info.circle.fill", title: "About Factum")
+                    NavigationLink {
+                        SettingsPlaceholderView(title: "Help & Support")
+                    } label: {
+                        settingsRow(icon: "questionmark.circle.fill", title: "Help & Support")
+                    }
+                    .listRowBackground(FactumTheme.cardBackground)
+                    NavigationLink {
+                        SettingsPlaceholderView(title: "About Factum")
+                    } label: {
+                        settingsRow(icon: "info.circle.fill", title: "About Factum")
+                    }
+                    .listRowBackground(FactumTheme.cardBackground)
                 } header: {
                     Text("Support")
                         .font(FactumTheme.smallFont)
@@ -666,6 +687,7 @@ struct SettingsView: View {
                                 .foregroundStyle(FactumTheme.destructive)
                         }
                     }
+                    .listRowBackground(FactumTheme.cardBackground)
                 }
             }
             .scrollContentBackground(.hidden)
@@ -692,25 +714,24 @@ struct SettingsView: View {
             .toolbarBackground(FactumTheme.background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
         }
-        .presentationBackground(FactumTheme.background)
-        .preferredColorScheme(appearanceMode == 0 ? nil : (appearanceMode == 1 ? .light : .dark))
-        .animation(.easeInOut(duration: 0.3), value: appearanceMode)
+        .preferredColorScheme(appearanceMode == 1 ? .light : .dark)
+        .onAppear {
+            // First time: resolve "system" (0) to the device's actual setting
+            if appearanceMode == 0 {
+                appearanceMode = UITraitCollection.current.userInterfaceStyle == .dark ? 2 : 1
+            }
+        }
     }
     
     private func settingsRow(icon: String, title: String) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
                 .foregroundStyle(FactumTheme.secondaryText)
-                .frame(width: 24)
+                .frame(width: 28)
             Text(title)
-                .font(FactumTheme.bodyFont)
+                .font(FactumTheme.font(16, weight: .light))
                 .foregroundStyle(FactumTheme.primaryText)
-            Spacer()
-            Image(systemName: "chevron.right")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(FactumTheme.tertiaryText)
         }
-        .listRowBackground(FactumTheme.cardBackground)
     }
 }
 
@@ -746,6 +767,30 @@ struct AllSessionsView: View {
             .toolbarBackground(.visible, for: .navigationBar)
         }
         .presentationBackground(FactumTheme.background)
+    }
+}
+
+// MARK: - Settings Placeholder View
+
+struct SettingsPlaceholderView: View {
+    let title: String
+    
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "wrench.and.screwdriver")
+                .font(.system(size: 40))
+                .foregroundStyle(FactumTheme.tertiaryText)
+            Text(title)
+                .font(FactumTheme.headlineFont)
+                .foregroundStyle(FactumTheme.primaryText)
+            Text("Coming soon")
+                .font(FactumTheme.bodyFont)
+                .foregroundStyle(FactumTheme.secondaryText)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(FactumTheme.background)
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 

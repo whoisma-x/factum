@@ -158,16 +158,22 @@ struct OnboardingView: View {
             Spacer()
             
             ZStack {
-                // Stacked avatar bubbles
+                // Stacked avatar bubbles with earthy gradients
+                let avatarData: [(String, Color, Color)] = [
+                    ("S", Color(red: 0.72, green: 0.55, blue: 0.42), Color(red: 0.58, green: 0.42, blue: 0.32)),
+                    ("J", Color(red: 0.55, green: 0.62, blue: 0.50), Color(red: 0.42, green: 0.50, blue: 0.38)),
+                    ("P", Color(red: 0.68, green: 0.58, blue: 0.50), Color(red: 0.55, green: 0.45, blue: 0.38)),
+                    ("A", Color(red: 0.60, green: 0.52, blue: 0.48), Color(red: 0.48, green: 0.40, blue: 0.36)),
+                ]
                 HStack(spacing: -12) {
-                    ForEach(["S", "J", "P", "A"], id: \.self) { initial in
+                    ForEach(avatarData, id: \.0) { initial, color1, color2 in
                         Circle()
-                            .fill(FactumTheme.elevated)
+                            .fill(LinearGradient(colors: [color1, color2], startPoint: .topLeading, endPoint: .bottomTrailing))
                             .frame(width: 52, height: 52)
                             .overlay(
                                 Text(initial)
                                     .font(FactumTheme.font(20, weight: .semibold))
-                                    .foregroundStyle(FactumTheme.primaryText)
+                                    .foregroundStyle(.white)
                             )
                             .overlay(
                                 Circle().strokeBorder(FactumTheme.background, lineWidth: 3)

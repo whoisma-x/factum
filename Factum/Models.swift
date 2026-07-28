@@ -8,6 +8,48 @@
 import Foundation
 import SwiftData
 
+/// Cached documents directory to avoid repeated FileManager lookups.
+private let factumDocumentsDirectory: URL = {
+    FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+}()
+
+// MARK: - Pending Delete Store
+
+/// Tracks timelapse IDs that were deleted locally but may not yet be deleted from
+/// the cloud. syncTimelapses checks this to avoid re-inserting deleted posts.
+enum PendingDeleteStore {
+    private static let key = "factum_pending_deletes"
+    
+    static func ids() -> Set<String> {
+        Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
+    }
+    
+    static func add(_ id: UUID) {
+        var current = ids()
+        current.insert(id.uuidString)
+        UserDefaults.standard.set(Array(current), forKey: key)
+    }
+    
+    static func remove(_ id: UUID) {
+        var current = ids()
+        current.remove(id.uuidString)
+        UserDefaults.standard.set(Array(current), forKey: key)
+    }
+    
+    static func contains(_ id: UUID) -> Bool {
+        ids().contains(id.uuidString)
+    }
+}
+
+// MARK: - Subject Segment
+
+/// A time segment during which the user studied a specific subject.
+struct SubjectSegment: Codable, Identifiable {
+    var id = UUID()
+    let subject: String
+    let seconds: Int
+}
+
 // MARK: - User Profile
 
 @Model
@@ -64,6 +106,7 @@ final class StudyTimelapse {
     var createdAt: Date
     var videoFileName: String?
     var thumbnailData: Data?
+    var afterPhotoData: Data?       // Second photo for before/after posts
     var videoDownloadURL: String?   // Storage download URL
     var thumbnailDownloadURL: String?
     var isLandscape: Bool
@@ -71,14 +114,38 @@ final class StudyTimelapse {
     var likedByUIDs: [String]
     var commentCount: Int
     var googlePhotosBackedUp: Bool
+    var subjectSegmentsJSON: String? // JSON-encoded [SubjectSegment]
+    
+    /// Decoded subject segments. Returns a single segment from `subject` + `durationSeconds` if no JSON is stored (backwards compatibility).
+    var subjectSegments: [SubjectSegment] {
+        get {
+            if let json = subjectSegmentsJSON,
+               let data = json.data(using: .utf8),
+               let segments = try? JSONDecoder().decode([SubjectSegment].self, from: data),
+               !segments.isEmpty {
+                return segments
+            }
+            // Fallback: single segment from the legacy subject field
+            return [SubjectSegment(subject: subject, seconds: durationSeconds)]
+        }
+        set {
+            if let data = try? JSONEncoder().encode(newValue) {
+                subjectSegmentsJSON = String(data: data, encoding: .utf8)
+            }
+        }
+    }
+    
+    /// Whether this post has more than one subject studied.
+    var hasMultipleSubjects: Bool {
+        subjectSegments.count > 1
+    }
     
     /// Returns the local video URL if the file exists on disk,
     /// otherwise falls back to the cloud download URL from Supabase Storage.
     var videoURL: URL? {
         // Try local file first
         if let videoFileName {
-            let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-            let url = docs.appendingPathComponent(videoFileName)
+            let url = factumDocumentsDirectory.appendingPathComponent(videoFileName)
             if FileManager.default.fileExists(atPath: url.path) {
                 return url
             }

@@ -125,44 +125,109 @@ struct TimelapseCardView: View {
     @State private var showDeleteConfirm = false
     @State private var cardPlayer: AVQueuePlayer?
     @State private var playerLooper: AVPlayerLooper?
+    @State private var cachedThumbnail: UIImage?
+    @State private var cachedAfterPhoto: UIImage?
+    @State private var showSubjectBreakdown = false
     
     private var isOwnPost: Bool {
         timelapse.authorID == AuthService.shared.currentUserID
     }
     
-    /// Card height adapts to content: portrait ~4:5, landscape ~16:9
+    private var hasMedia: Bool {
+        timelapse.videoFileName != nil || timelapse.thumbnailData != nil
+    }
+    
+    /// Card height adapts to content: portrait ~4:5, landscape ~16:9, no-media ~2:1
     private var videoAspectRatio: CGFloat {
-        timelapse.isLandscape ? 16.0 / 9.0 : 4.0 / 5.0
+        if !hasMedia { return 2.0 }
+        return timelapse.isLandscape ? 16.0 / 9.0 : 4.0 / 5.0
     }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Timelapse auto-play video — tap to open detail
-            Button {
-                showDetail = true
-            } label: {
-                GeometryReader { geo in
-                    let width = geo.size.width
-                    let height = width / videoAspectRatio
-                    
-                    ZStack(alignment: .topLeading) {
+            GeometryReader { geo in
+                let width = geo.size.width
+                let height = width / videoAspectRatio
+                
+                ZStack(alignment: .topLeading) {
                         // Video / thumbnail fills the entire area — centered
                         // so any crop is split equally between top and bottom
                         if let cardPlayer {
                             FillVideoPlayerView(player: cardPlayer)
                                 .frame(width: width, height: height)
                                 .allowsHitTesting(false)
-                        } else if let data = timelapse.thumbnailData,
-                                  let uiImage = UIImage(data: data) {
-                            Image(uiImage: uiImage)
-                                .resizable()
-                                .scaledToFill()
+                        } else if let uiImage = cachedThumbnail {
+                            if let afterImage = cachedAfterPhoto {
+                                // Before/after carousel
+                                TabView {
+                                    Image(uiImage: uiImage)
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: width, height: height)
+                                        .clipped()
+                                    Image(uiImage: afterImage)
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: width, height: height)
+                                        .clipped()
+                                }
+                                .tabViewStyle(.page(indexDisplayMode: .always))
                                 .frame(width: width, height: height)
-                                .clipped()
+                            } else {
+                                Image(uiImage: uiImage)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: width, height: height)
+                                    .clipped()
+                            }
                         } else {
-                            Rectangle()
-                                .fill(FactumTheme.cardBackground)
-                                .frame(width: width, height: height)
+                            // No-media post — show session stats centered
+                            ZStack {
+                                Rectangle()
+                                    .fill(FactumTheme.surfaceBackground)
+                                
+                                HStack(spacing: 24) {
+                                    // Duration
+                                    VStack(spacing: 6) {
+                                        Image(systemName: "clock.fill")
+                                            .font(.system(size: 20))
+                                            .frame(height: 22)
+                                            .foregroundStyle(FactumTheme.accent)
+                                        Text(timelapse.formattedDuration)
+                                            .font(FactumTheme.font(16, weight: .bold))
+                                            .frame(height: 20)
+                                            .foregroundStyle(FactumTheme.primaryText)
+                                        Text("Duration")
+                                            .font(FactumTheme.smallFont)
+                                            .frame(height: 14)
+                                            .foregroundStyle(FactumTheme.tertiaryText)
+                                    }
+                                    
+                                    Rectangle()
+                                        .fill(FactumTheme.separator)
+                                        .frame(width: 1, height: 44)
+                                    
+                                    // Subject
+                                    VStack(spacing: 6) {
+                                        Image(systemName: "book.fill")
+                                            .font(.system(size: 20))
+                                            .frame(height: 22)
+                                            .foregroundStyle(StudySubject.color(for: timelapse.subject, in: subjects))
+                                        Text(timelapse.subject)
+                                            .font(FactumTheme.font(16, weight: .bold))
+                                            .frame(height: 20)
+                                            .foregroundStyle(FactumTheme.primaryText)
+                                            .lineLimit(1)
+                                        Text("Subject")
+                                            .font(FactumTheme.smallFont)
+                                            .frame(height: 14)
+                                            .foregroundStyle(FactumTheme.tertiaryText)
+                                    }
+                                }
+                                .padding(.top, 16)
+                            }
+                            .frame(width: width, height: height)
                         }
                         
                         // Overlay: Author header on top
@@ -181,14 +246,34 @@ struct TimelapseCardView: View {
                             
                             Spacer()
                             
-                            // Subject tag
-                            Text(timelapse.subject)
-                                .font(FactumTheme.smallFont)
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 4)
-                                .background(StudySubject.color(for: timelapse.subject, in: subjects))
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                            // Subject tag — tappable if multi-subject
+                            if timelapse.hasMultipleSubjects {
+                                Button {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        showSubjectBreakdown.toggle()
+                                    }
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Text(timelapse.subject)
+                                            .font(FactumTheme.smallFont)
+                                        Image(systemName: showSubjectBreakdown ? "chevron.up" : "chevron.down")
+                                            .font(.system(size: 8, weight: .bold))
+                                    }
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 4)
+                                    .background(StudySubject.color(for: timelapse.subject, in: subjects))
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                                }
+                            } else {
+                                Text(timelapse.subject)
+                                    .font(FactumTheme.smallFont)
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 4)
+                                    .background(StudySubject.color(for: timelapse.subject, in: subjects))
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                            }
                             
                             if isOwnPost {
                                 Menu {
@@ -217,6 +302,36 @@ struct TimelapseCardView: View {
                             alignment: .top
                         )
                         
+                        // Multi-subject breakdown dropdown
+                        if showSubjectBreakdown {
+                            VStack(alignment: .trailing, spacing: 0) {
+                                HStack { Spacer() }
+                                VStack(alignment: .leading, spacing: 6) {
+                                    ForEach(timelapse.subjectSegments) { segment in
+                                        HStack(spacing: 8) {
+                                            Circle()
+                                                .fill(StudySubject.color(for: segment.subject, in: subjects))
+                                                .frame(width: 8, height: 8)
+                                            Text(segment.subject)
+                                                .font(FactumTheme.smallFont)
+                                                .foregroundStyle(.white)
+                                            Spacer()
+                                            Text(formatSegmentDuration(segment.seconds))
+                                                .font(FactumTheme.smallFont)
+                                                .foregroundStyle(.white.opacity(0.7))
+                                        }
+                                    }
+                                }
+                                .padding(10)
+                                .background(.black.opacity(0.7))
+                                .clipShape(RoundedRectangle(cornerRadius: 10))
+                                .frame(maxWidth: 180)
+                            }
+                            .padding(.trailing, 12)
+                            .padding(.top, 44)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
+                        
                         // Overlay: Duration badge on bottom-right
                         VStack {
                             Spacer()
@@ -237,17 +352,18 @@ struct TimelapseCardView: View {
                     .clipped()
                 }
                 .aspectRatio(videoAspectRatio, contentMode: .fit)
-            }
-            .onAppear {
-                if let cardPlayer {
-                    cardPlayer.play()
-                } else {
-                    setupCardPlayer()
+                .onAppear {
+                    if let cardPlayer {
+                        cardPlayer.play()
+                    } else {
+                        setupCardPlayer()
+                    }
                 }
-            }
-            .onDisappear {
-                cardPlayer?.pause()
-            }
+                .onDisappear {
+                    cardPlayer?.pause()
+                    playerLooper = nil
+                    cardPlayer = nil
+                }
             
             // Caption, description, and actions — flush against the video
             VStack(alignment: .leading, spacing: 6) {
@@ -310,6 +426,10 @@ struct TimelapseCardView: View {
         }
         .background(FactumTheme.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            showDetail = true
+        }
         .sheet(isPresented: $showDetail) {
             TimelapseDetailView(timelapse: timelapse)
         }
@@ -324,6 +444,12 @@ struct TimelapseCardView: View {
         .onAppear {
             let uid = AuthService.shared.currentUserID
             isLiked = timelapse.likedByUIDs.contains(uid)
+            if cachedThumbnail == nil, let data = timelapse.thumbnailData {
+                cachedThumbnail = UIImage(data: data)
+            }
+            if cachedAfterPhoto == nil, let data = timelapse.afterPhotoData {
+                cachedAfterPhoto = UIImage(data: data)
+            }
         }
     }
     
@@ -333,13 +459,16 @@ struct TimelapseCardView: View {
         cardPlayer = nil
         playerLooper = nil
         
+        // Capture info before deleting
+        let timelapseID = timelapse.id
+        let authorID = timelapse.authorID
+        
         // Delete local video file
         if let videoURL = timelapse.videoURL {
             try? FileManager.default.removeItem(at: videoURL)
         }
         
         // Delete local comments for this timelapse
-        let timelapseID = timelapse.id
         let descriptor = FetchDescriptor<TimelapseComment>(
             predicate: #Predicate { $0.timelapseID == timelapseID }
         )
@@ -349,10 +478,27 @@ struct TimelapseCardView: View {
             }
         }
         
-        // Delete from SwiftData
+        // Delete from SwiftData and persist immediately
         modelContext.delete(timelapse)
+        try? modelContext.save()
         
-        // MVP: Delete is local only
+        // Track pending cloud delete so syncTimelapses won't re-insert
+        PendingDeleteStore.add(timelapseID)
+        
+        // Delete from Supabase (cloud DB + storage files)
+        Task {
+            do {
+                try await SupabaseService.shared.deleteTimelapse(timelapseID)
+                // Cloud delete succeeded — remove from pending list
+                PendingDeleteStore.remove(timelapseID)
+            } catch {
+                print("[DELETE] Cloud delete failed (will retry on next sync): \(error)")
+            }
+            await StorageService.shared.deleteTimelapseFiles(
+                userUID: authorID,
+                timelapseID: timelapseID.uuidString
+            )
+        }
     }
     
     private func setupCardPlayer() {
@@ -378,9 +524,12 @@ struct TimelapseDetailView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var comments: [TimelapseComment]
     @Query private var users: [UserProfile]
+    @Query(sort: \StudySubject.sortOrder) private var subjects: [StudySubject]
     @State private var newComment = ""
     @State private var player: AVPlayer?
     @State private var isLiked = false
+    @State private var cachedThumbnail: UIImage?
+    @State private var cachedAfterPhoto: UIImage?
     
     private var currentUserName: String {
         let uid = AuthService.shared.currentUserID
@@ -395,26 +544,77 @@ struct TimelapseDetailView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    // Timelapse video player
+                    // Timelapse video player or photo
                     ZStack {
                         if let player {
                             FillVideoPlayerView(player: player)
+                        } else if let uiImage = cachedThumbnail {
+                            if let afterImage = cachedAfterPhoto {
+                                // Before/after carousel
+                                TabView {
+                                    Image(uiImage: uiImage)
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fill)
+                                    Image(uiImage: afterImage)
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fill)
+                                }
+                                .tabViewStyle(.page(indexDisplayMode: .always))
+                            } else {
+                                Image(uiImage: uiImage)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                            }
                         } else {
+                            // No-media — show session stats
                             Rectangle()
                                 .fill(FactumTheme.surfaceBackground)
                                 .overlay(
-                                    VStack(spacing: 8) {
-                                        Image(systemName: "video.slash")
-                                            .font(.system(size: 36))
-                                            .foregroundStyle(FactumTheme.tertiaryText)
-                                        Text("Video unavailable")
-                                            .font(FactumTheme.captionFont)
-                                            .foregroundStyle(FactumTheme.tertiaryText)
+                                    HStack(spacing: 24) {
+                                        VStack(spacing: 6) {
+                                            Image(systemName: "clock.fill")
+                                                .font(.system(size: 20))
+                                                .frame(height: 22)
+                                                .foregroundStyle(FactumTheme.accent)
+                                            Text(timelapse.formattedDuration)
+                                                .font(FactumTheme.font(16, weight: .bold))
+                                                .frame(height: 20)
+                                                .foregroundStyle(FactumTheme.primaryText)
+                                            Text("Duration")
+                                                .font(FactumTheme.smallFont)
+                                                .frame(height: 14)
+                                                .foregroundStyle(FactumTheme.tertiaryText)
+                                        }
+                                        
+                                        Rectangle()
+                                            .fill(FactumTheme.separator)
+                                            .frame(width: 1, height: 44)
+                                        
+                                        VStack(spacing: 6) {
+                                            Image(systemName: "book.fill")
+                                                .font(.system(size: 20))
+                                                .frame(height: 22)
+                                                .foregroundStyle(StudySubject.color(for: timelapse.subject, in: subjects))
+                                            Text(timelapse.subject)
+                                                .font(FactumTheme.font(16, weight: .bold))
+                                                .frame(height: 20)
+                                                .foregroundStyle(FactumTheme.primaryText)
+                                                .lineLimit(1)
+                                            Text("Subject")
+                                                .font(FactumTheme.smallFont)
+                                                .frame(height: 14)
+                                                .foregroundStyle(FactumTheme.tertiaryText)
+                                        }
                                     }
+                                    .padding(.top, 16)
                                 )
                         }
                     }
-                    .aspectRatio(timelapse.isLandscape ? 16.0 / 9.0 : 9.0 / 16.0, contentMode: .fit)
+                    .aspectRatio({
+                        let hasMedia = timelapse.videoFileName != nil || timelapse.thumbnailData != nil
+                        if !hasMedia { return 2.0 }
+                        return timelapse.isLandscape ? 16.0 / 9.0 : 9.0 / 16.0
+                    }(), contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     
                     // Author info
@@ -436,13 +636,32 @@ struct TimelapseDetailView: View {
                         .font(FactumTheme.headlineFont)
                         .foregroundStyle(FactumTheme.primaryText)
                     
-                    // Subject
-                    HStack {
-                        Image(systemName: "book.fill")
-                            .foregroundStyle(FactumTheme.secondaryText)
-                        Text(timelapse.subject)
-                            .font(FactumTheme.bodyFont)
-                            .foregroundStyle(FactumTheme.secondaryText)
+                    // Subject(s)
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Image(systemName: "book.fill")
+                                .foregroundStyle(FactumTheme.secondaryText)
+                            Text(timelapse.subject)
+                                .font(FactumTheme.bodyFont)
+                                .foregroundStyle(FactumTheme.secondaryText)
+                        }
+                        if timelapse.hasMultipleSubjects {
+                            ForEach(timelapse.subjectSegments) { segment in
+                                HStack(spacing: 8) {
+                                    Circle()
+                                        .fill(StudySubject.color(for: segment.subject, in: subjects))
+                                        .frame(width: 8, height: 8)
+                                    Text(segment.subject)
+                                        .font(FactumTheme.captionFont)
+                                        .foregroundStyle(FactumTheme.primaryText)
+                                    Spacer()
+                                    Text(formatSegmentDuration(segment.seconds))
+                                        .font(FactumTheme.captionFont)
+                                        .foregroundStyle(FactumTheme.secondaryText)
+                                }
+                                .padding(.leading, 24)
+                            }
+                        }
                     }
                     
                     // Description
@@ -564,6 +783,12 @@ struct TimelapseDetailView: View {
             .onAppear {
                 let uid = AuthService.shared.currentUserID
                 isLiked = timelapse.likedByUIDs.contains(uid)
+                if cachedThumbnail == nil, let data = timelapse.thumbnailData {
+                    cachedThumbnail = UIImage(data: data)
+                }
+                if cachedAfterPhoto == nil, let data = timelapse.afterPhotoData {
+                    cachedAfterPhoto = UIImage(data: data)
+                }
                 
                 if let url = timelapse.videoURL {
                     print("[VIDEO] Detail: playing from \(url.scheme == "file" ? "local" : "cloud") URL")
@@ -659,6 +884,15 @@ func avatarView(name: String, size: CGFloat, avatarURL: String? = nil) -> some V
                 )
         }
     }
+}
+
+private func formatSegmentDuration(_ seconds: Int) -> String {
+    let h = seconds / 3600
+    let m = (seconds % 3600) / 60
+    let s = seconds % 60
+    if h > 0 { return m > 0 ? "\(h)h \(m)m" : "\(h)h" }
+    if m > 0 { return s > 0 ? "\(m)m \(s)s" : "\(m)m" }
+    return "\(seconds)s"
 }
 
 extension Date {

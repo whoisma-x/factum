@@ -244,7 +244,7 @@ struct StatsView: View {
     private var summaryStats: some View {
         let totalSeconds = filteredTimelapses.reduce(0) { $0 + $1.durationSeconds }
         let sessionCount = filteredTimelapses.count
-        let uniqueSubjects = Set(filteredTimelapses.map { $0.subject }).count
+        let uniqueSubjects = Set(filteredTimelapses.flatMap { $0.subjectSegments.map(\.subject) }).count
         
         return VStack(alignment: .leading, spacing: 12) {
             Text("Summary")
@@ -389,7 +389,10 @@ func formatDuration(_ seconds: Int) -> String {
 func subjectBreakdown(from timelapses: [StudyTimelapse], subjects: [StudySubject]) -> [(subject: String, seconds: Int, color: Color)] {
     var dict: [String: Int] = [:]
     for t in timelapses {
-        dict[t.subject, default: 0] += t.durationSeconds
+        // Use per-subject segments when available; falls back to single segment
+        for segment in t.subjectSegments {
+            dict[segment.subject, default: 0] += segment.seconds
+        }
     }
     return dict.map { (subject: $0.key, seconds: $0.value, color: StudySubject.color(for: $0.key, in: subjects)) }
         .sorted { $0.seconds > $1.seconds }
@@ -445,7 +448,11 @@ struct PeriodDetailPopover: View {
 
 func buildBreakdown(from timelapses: [StudyTimelapse], subjects: [StudySubject]) -> [(subject: String, seconds: Int, percent: Int, color: Color)] {
     var dict: [String: Int] = [:]
-    for t in timelapses { dict[t.subject, default: 0] += t.durationSeconds }
+    for t in timelapses {
+        for segment in t.subjectSegments {
+            dict[segment.subject, default: 0] += segment.seconds
+        }
+    }
     let totalSec = dict.values.reduce(0, +)
     return dict.map { (subject: $0.key, seconds: $0.value, percent: totalSec > 0 ? Int(Double($0.value) / Double(totalSec) * 100) : 0, color: StudySubject.color(for: $0.key, in: subjects)) }
         .sorted { $0.percent > $1.percent }
@@ -578,7 +585,9 @@ struct WeeklyStatsView: View {
         for (day, dayTimelapses) in grouped {
             var subjectTotals: [String: Int] = [:]
             for t in dayTimelapses {
-                subjectTotals[t.subject, default: 0] += t.durationSeconds
+                for segment in t.subjectSegments {
+                    subjectTotals[segment.subject, default: 0] += segment.seconds
+                }
             }
             for (subject, seconds) in subjectTotals {
                 entries.append(WeeklyChartEntry(
@@ -599,6 +608,14 @@ struct WeeklyStatsView: View {
         timelapses.reduce(0) { $0 + $1.durationSeconds } / 60
     }
     
+    /// Switch Y-axis to hours when any single day has 90+ minutes
+    private var useHours: Bool {
+        let grouped = Dictionary(grouping: chartData, by: { calendar.startOfDay(for: $0.day) })
+        return grouped.values.contains { dayEntries in
+            dayEntries.reduce(0) { $0 + $1.minutes } >= 90
+        }
+    }
+    
     // Breakdown for the selected day (long-press)
     private var selectedDayBreakdown: [(subject: String, minutes: Int, percent: Int, color: Color)]? {
         guard let day = selectedDay else { return nil }
@@ -607,7 +624,11 @@ struct WeeklyStatsView: View {
         guard !dayTimelapses.isEmpty else { return nil }
         
         var dict: [String: Int] = [:]
-        for t in dayTimelapses { dict[t.subject, default: 0] += t.durationSeconds }
+        for t in dayTimelapses {
+            for segment in t.subjectSegments {
+                dict[segment.subject, default: 0] += segment.seconds
+            }
+        }
         let totalSec = dict.values.reduce(0, +)
         
         return dict.map { (subject: $0.key, minutes: $0.value / 60, percent: totalSec > 0 ? Int(Double($0.value) / Double(totalSec) * 100) : 0, color: StudySubject.color(for: $0.key, in: subjects)) }
@@ -650,7 +671,8 @@ struct WeeklyStatsView: View {
                 Chart(chartData) { entry in
                     BarMark(
                         x: .value("Day", entry.day, unit: .day),
-                        y: .value("Minutes", entry.minutes)
+                        y: .value(useHours ? "Hours" : "Minutes",
+                                  useHours ? Double(entry.minutes) / 60.0 : Double(entry.minutes))
                     )
                     .foregroundStyle(entry.color)
                     .cornerRadius(4)
@@ -668,7 +690,7 @@ struct WeeklyStatsView: View {
                         AxisValueLabel().foregroundStyle(FactumTheme.tertiaryText)
                     }
                 }
-                .chartYAxisLabel("min", position: .trailing)
+                .chartYAxisLabel(useHours ? "hr" : "min", position: .trailing)
                 .frame(height: 220)
                 .chartOverlay { proxy in
                     GeometryReader { geometry in
@@ -820,6 +842,15 @@ struct MonthlyStatsView: View {
         }
     }
     
+    /// All cells: leading empties + day 1..daysInMonth + trailing empties, grouped into rows of 7.
+    private var calendarRows: [[Int?]] {
+        var cells: [Int?] = Array(repeating: nil, count: firstWeekdayOffset)
+        cells += (1...daysInMonth).map { Optional($0) }
+        let trailing = trailingEmptyCells
+        cells += Array(repeating: nil as Int?, count: trailing)
+        return stride(from: 0, to: cells.count, by: 7).map { Array(cells[$0..<min($0 + 7, cells.count)]) }
+    }
+    
     private var calendarGrid: some View {
         VStack(spacing: 12) {
             // Total for the month
@@ -837,70 +868,34 @@ struct MonthlyStatsView: View {
             }
             
             // Weekday headers
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 7), spacing: 4) {
+            HStack(spacing: 4) {
                 ForEach(weekdayHeaders, id: \.id) { item in
                     Text(item.label)
                         .font(FactumTheme.font(11, weight: .medium))
                         .foregroundStyle(FactumTheme.tertiaryText)
                         .frame(maxWidth: .infinity)
                 }
-                
-                // Leading empty cells
-                ForEach(0..<firstWeekdayOffset, id: \.self) { _ in
-                    Color.clear
-                        .frame(height: 52)
-                }
-                
-                // Day cells
-                ForEach(1...daysInMonth, id: \.self) { day in
-                    let minutes = dailyMinutes[day] ?? 0
-                    let intensity = maxMinutes > 0 ? Double(minutes) / Double(maxMinutes) : 0
-                    let isToday = day == todayDay
-                    let isSelected = day == selectedDay
-                    
-                    VStack(spacing: 2) {
-                        Text("\(day)")
-                            .font(FactumTheme.font(18, weight: minutes > 0 || isToday ? .semibold : .light))
-                            .foregroundStyle(isToday ? FactumTheme.background : (minutes > 0 ? FactumTheme.primaryText : FactumTheme.tertiaryText))
-                        
-                        if minutes > 0 {
-                            Text(minutes >= 60 ? "\(minutes / 60)h\(minutes % 60 > 0 ? " \(minutes % 60)m" : "")" : "\(minutes)m")
-                                .font(FactumTheme.font(9, weight: .medium))
-                                .foregroundStyle(isToday ? FactumTheme.background.opacity(0.7) : FactumTheme.secondaryText)
-                        } else {
-                            Text("")
-                                .font(FactumTheme.font(9))
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 52)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(isToday
-                                  ? FactumTheme.primaryText
-                                  : (minutes > 0
-                                     ? FactumTheme.accent.opacity(0.3 + intensity * 0.7)
-                                     : FactumTheme.surfaceBackground))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(isSelected ? FactumTheme.primaryText : Color.clear, lineWidth: 2)
-                    )
-                    .onLongPressGesture(minimumDuration: 0.3) {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            if selectedDay == day {
-                                selectedDay = nil
+            }
+            
+            // Calendar rows (non-lazy so all cells are always rendered)
+            VStack(spacing: 4) {
+                ForEach(Array(calendarRows.enumerated()), id: \.offset) { _, row in
+                    HStack(spacing: 4) {
+                        ForEach(0..<row.count, id: \.self) { col in
+                            if let day = row[col] {
+                                let minutes = dailyMinutes[day] ?? 0
+                                let intensity = maxMinutes > 0 ? Double(minutes) / Double(maxMinutes) : 0
+                                let isToday = day == todayDay
+                                let isSelected = day == selectedDay
+                                
+                                dayCell(day: day, minutes: minutes, intensity: intensity, isToday: isToday, isSelected: isSelected)
                             } else {
-                                selectedDay = minutes > 0 ? day : nil
+                                Color.clear
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 48)
                             }
                         }
                     }
-                }
-                
-                // Trailing empty cells to complete the last row
-                ForEach(0..<trailingEmptyCells, id: \.self) { _ in
-                    Color.clear
-                        .frame(height: 52)
                 }
             }
             
@@ -915,6 +910,46 @@ struct MonthlyStatsView: View {
             }
         }
         .padding(16)
+    }
+    
+    private func dayCell(day: Int, minutes: Int, intensity: Double, isToday: Bool, isSelected: Bool) -> some View {
+        VStack(spacing: 2) {
+            Text("\(day)")
+                .font(FactumTheme.font(16, weight: minutes > 0 || isToday ? .semibold : .light))
+                .foregroundStyle(isToday ? FactumTheme.background : (minutes > 0 ? FactumTheme.primaryText : FactumTheme.tertiaryText))
+            
+            if minutes > 0 {
+                Text(minutes >= 60 ? "\(minutes / 60)h\(minutes % 60 > 0 ? " \(minutes % 60)m" : "")" : "\(minutes)m")
+                    .font(FactumTheme.font(8, weight: .medium))
+                    .foregroundStyle(isToday ? FactumTheme.background.opacity(0.7) : FactumTheme.secondaryText)
+            } else {
+                Text("")
+                    .font(FactumTheme.font(8))
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 48)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(isToday
+                      ? FactumTheme.primaryText
+                      : (minutes > 0
+                         ? FactumTheme.accent.opacity(0.3 + intensity * 0.7)
+                         : FactumTheme.surfaceBackground))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(isSelected ? FactumTheme.primaryText : Color.clear, lineWidth: 2)
+        )
+        .onLongPressGesture(minimumDuration: 0.3) {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                if selectedDay == day {
+                    selectedDay = nil
+                } else {
+                    selectedDay = minutes > 0 ? day : nil
+                }
+            }
+        }
     }
     
     private var monthlyDonut: some View {
@@ -942,7 +977,9 @@ struct YearlyStatsView: View {
         for (month, monthTimelapses) in grouped {
             var subjectTotals: [String: Int] = [:]
             for t in monthTimelapses {
-                subjectTotals[t.subject, default: 0] += t.durationSeconds
+                for segment in t.subjectSegments {
+                    subjectTotals[segment.subject, default: 0] += segment.seconds
+                }
             }
             // Create a date for the 1st of that month for the x-axis
             let year = calendar.component(.year, from: referenceDate)
@@ -1123,64 +1160,31 @@ struct SwipeableCard<Page0: View, Page1: View>: View {
     
     @State private var currentPage = 0
     @State private var dragOffset: CGFloat = 0
-    @State private var height0: CGFloat = 300
-    @State private var height1: CGFloat = 300
+    @State private var height0: CGFloat = 450
+    @State private var height1: CGFloat = 450
     @State private var cardWidth: CGFloat = 0
     
-    private var progress: CGFloat {
-        guard cardWidth > 0 else { return CGFloat(currentPage) }
-        guard dragOffset != 0 else { return CGFloat(currentPage) }
-        let raw = CGFloat(currentPage) - dragOffset / cardWidth
-        return min(1, max(0, raw))
-    }
-    
-    private var interpolatedHeight: CGFloat {
-        let h = height0 + (height1 - height0) * progress
-        return max(h, 50)
+    private var activeHeight: CGFloat {
+        max(currentPage == 0 ? height0 : height1, 50)
     }
     
     var body: some View {
         VStack(spacing: 0) {
-            // Page indicators
-            HStack(spacing: 6) {
-                ForEach(0..<2, id: \.self) { i in
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(CGFloat(i) <= progress + 0.5 && CGFloat(i) >= progress - 0.5
-                              ? FactumTheme.primaryText : FactumTheme.separator)
-                        .frame(width: abs(CGFloat(i) - progress) < 0.5 ? 16 : 6, height: 6)
-                }
-            }
-            .padding(.top, 12)
-            .padding(.bottom, 4)
-            .animation(.easeInOut(duration: 0.15), value: progress)
-            
-            // Measurement layer: both pages rendered at full width, invisible, to capture natural heights
-            ZStack {
-                page0
-                    .fixedSize(horizontal: false, vertical: true)
-                    .background(GeometryReader { g in
-                        Color.clear.preference(key: Height0Key.self, value: g.size.height)
-                    })
-                
-                page1
-                    .fixedSize(horizontal: false, vertical: true)
-                    .background(GeometryReader { g in
-                        Color.clear.preference(key: Height1Key.self, value: g.size.height)
-                    })
-            }
-            .frame(height: 0)
-            .clipped()
-            .allowsHitTesting(false)
-            
-            // Visible sliding content
+            // Visible sliding content — each page measures itself
             Color.clear
-                .frame(height: interpolatedHeight)
+                .frame(height: activeHeight)
                 .overlay(alignment: .topLeading) {
                     HStack(alignment: .top, spacing: 0) {
                         page0
                             .frame(width: max(cardWidth, 1), alignment: .top)
+                            .background(GeometryReader { g in
+                                Color.clear.preference(key: Height0Key.self, value: g.size.height)
+                            })
                         page1
                             .frame(width: max(cardWidth, 1), alignment: .top)
+                            .background(GeometryReader { g in
+                                Color.clear.preference(key: Height1Key.self, value: g.size.height)
+                            })
                     }
                     .offset(x: -CGFloat(currentPage) * max(cardWidth, 1) + dragOffset)
                 }
@@ -1210,12 +1214,26 @@ struct SwipeableCard<Page0: View, Page1: View>: View {
                             }
                         }
                 )
+            
+            // Page indicators at bottom
+            HStack(spacing: 6) {
+                ForEach(0..<2, id: \.self) { i in
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(i == currentPage
+                              ? FactumTheme.primaryText : FactumTheme.separator)
+                        .frame(width: i == currentPage ? 16 : 6, height: 6)
+                }
+            }
+            .padding(.top, 8)
+            .padding(.bottom, 12)
+            .animation(.easeInOut(duration: 0.15), value: currentPage)
         }
         .background(FactumTheme.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .padding(.horizontal, 16)
         .onPreferenceChange(Height0Key.self) { height0 = $0 }
         .onPreferenceChange(Height1Key.self) { height1 = $0 }
+        .animation(.easeInOut(duration: 0.25), value: activeHeight)
     }
 }
 

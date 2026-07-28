@@ -114,6 +114,26 @@ final class StorageService {
         return publicURL.absoluteString
     }
     
+    // MARK: - Delete Storage Files
+    
+    /// Delete video and thumbnail files from Supabase Storage for a timelapse.
+    func deleteTimelapseFiles(userUID: String, timelapseID: String) async {
+        let videoPath = "\(userUID)/\(timelapseID).mp4"
+        let thumbPath = "\(userUID)/\(timelapseID).jpg"
+        
+        do {
+            try await supabase.storage.from("timelapses").remove(paths: [videoPath])
+        } catch {
+            print("[STORAGE] Video delete failed for \(videoPath): \(error)")
+        }
+        
+        do {
+            try await supabase.storage.from("thumbnails").remove(paths: [thumbPath])
+        } catch {
+            print("[STORAGE] Thumbnail delete failed for \(thumbPath): \(error)")
+        }
+    }
+    
     // MARK: - Errors
     
     enum StorageError: LocalizedError {

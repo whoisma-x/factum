@@ -488,6 +488,20 @@ final class SupabaseService {
     @MainActor
     func syncTimelapses(forUser uid: String, context: ModelContext) async {
         do {
+            // Retry any pending cloud deletes before syncing
+            let pendingDeletes = PendingDeleteStore.ids()
+            for idString in pendingDeletes {
+                if let uuid = UUID(uuidString: idString) {
+                    do {
+                        try await deleteTimelapse(uuid)
+                        PendingDeleteStore.remove(uuid)
+                        print("[SYNC] Retried pending delete for \(idString.prefix(8))")
+                    } catch {
+                        print("[SYNC] Pending delete retry failed for \(idString.prefix(8)): \(error)")
+                    }
+                }
+            }
+            
             let rows = try await fetchTimelapses(forUser: uid, limit: 200)
             print("[SYNC] Found \(rows.count) timelapses in Supabase")
             
@@ -498,10 +512,18 @@ final class SupabaseService {
             
             var updatedCount = 0
             var insertedCount = 0
-            var thumbDownloaded = 0
+            
+            // Collect timelapses needing thumbnail downloads
+            var thumbDownloads: [(timelapse: StudyTimelapse, url: URL)] = []
             
             for row in rows {
                 let idString = row.id.uuidString
+                
+                // Skip any timelapse that was locally deleted
+                if PendingDeleteStore.contains(row.id) {
+                    print("[SYNC] Skipping deleted timelapse \(idString.prefix(8))")
+                    continue
+                }
                 
                 if localIDSet.contains(idString) {
                     if let existing = localTimelapses.first(where: { $0.id == row.id }) {
@@ -511,14 +533,11 @@ final class SupabaseService {
                         existing.videoDownloadURL = row.videoDownloadUrl
                         existing.thumbnailDownloadURL = row.thumbnailDownloadUrl
                         existing.authorAvatarURL = row.authorAvatarUrl
-                        // Download thumbnail from cloud if missing locally
+                        // Queue thumbnail download if missing locally
                         if existing.thumbnailData == nil,
                            let thumbURL = row.thumbnailDownloadUrl,
                            let thumbRemoteURL = URL(string: thumbURL) {
-                            if let (thumbData, _) = try? await URLSession.shared.data(from: thumbRemoteURL) {
-                                existing.thumbnailData = thumbData
-                                thumbDownloaded += 1
-                            }
+                            thumbDownloads.append((existing, thumbRemoteURL))
                         }
                         updatedCount += 1
                     }
@@ -540,18 +559,42 @@ final class SupabaseService {
                     timelapse.commentCount = row.commentCount
                     timelapse.videoDownloadURL = row.videoDownloadUrl
                     timelapse.thumbnailDownloadURL = row.thumbnailDownloadUrl
-                    // Download thumbnail from cloud
+                    // Queue thumbnail download
                     if let thumbURL = row.thumbnailDownloadUrl,
                        let thumbRemoteURL = URL(string: thumbURL) {
-                        if let (thumbData, _) = try? await URLSession.shared.data(from: thumbRemoteURL) {
-                            timelapse.thumbnailData = thumbData
-                            thumbDownloaded += 1
-                        }
+                        thumbDownloads.append((timelapse, thumbRemoteURL))
                     }
                     
                     context.insert(timelapse)
                     insertedCount += 1
                     print("[SYNC] Restored timelapse: \(row.subject) - \"\(row.caption.prefix(30))\" (\(row.durationSeconds)s)")
+                }
+            }
+            
+            // Download thumbnails in parallel (max 4 concurrent)
+            var thumbDownloaded = 0
+            if !thumbDownloads.isEmpty {
+                await withTaskGroup(of: (Int, Data?).self) { group in
+                    for (index, task) in thumbDownloads.enumerated() {
+                        group.addTask {
+                            let data = try? await URLSession.shared.data(from: task.url).0
+                            return (index, data)
+                        }
+                        // Limit concurrency to 4
+                        if (index + 1) % 4 == 0, let result = await group.next() {
+                            if let data = result.1 {
+                                thumbDownloads[result.0].timelapse.thumbnailData = data
+                                thumbDownloaded += 1
+                            }
+                        }
+                    }
+                    // Collect remaining results
+                    for await result in group {
+                        if let data = result.1 {
+                            thumbDownloads[result.0].timelapse.thumbnailData = data
+                            thumbDownloaded += 1
+                        }
+                    }
                 }
             }
             print("[SYNC] Timelapses: \(insertedCount) restored from cloud, \(updatedCount) updated, \(thumbDownloaded) thumbnails downloaded")

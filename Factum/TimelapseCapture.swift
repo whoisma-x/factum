@@ -90,6 +90,7 @@ final class TimelapseWriter: @unchecked Sendable {
     private var skipInterval: Int = 3
     private var framesSinceLastWrite: Int = 0
     private var frameCounter: Int = 0  // monotonic counter for unique file names
+    private var consecutiveWriteFailures: Int = 0
 
     private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
     private let colorSpace = CGColorSpaceCreateDeviceRGB()
@@ -102,12 +103,31 @@ final class TimelapseWriter: @unchecked Sendable {
         self.maxFrames = maxFrames
     }
 
+    /// Remove any orphaned frame directories left over from a previous session
+    /// that crashed or was force-quit before cleanup could run.
+    static func cleanupOrphanedFrameDirs() {
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        guard let contents = try? FileManager.default.contentsOfDirectory(
+            at: caches, includingPropertiesForKeys: nil
+        ) else { return }
+        for url in contents where url.lastPathComponent.hasPrefix("factum_frames_") {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
     /// Prepare a temp directory for frame storage.
     func start() -> Bool {
         lock.lock()
         defer { lock.unlock() }
 
-        let dir = FileManager.default.temporaryDirectory
+        // Clean up any orphaned frame dirs from previous sessions
+        Self.cleanupOrphanedFrameDirs()
+
+        // Use cachesDirectory instead of temporaryDirectory — iOS can purge
+        // temp files while the app is backgrounded during long study sessions,
+        // which would silently destroy recorded frames.  Caches are only purged
+        // under extreme disk pressure and never while the app is in foreground.
+        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
             .appendingPathComponent("factum_frames_\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
@@ -118,6 +138,7 @@ final class TimelapseWriter: @unchecked Sendable {
         skipInterval = 3
         framesSinceLastWrite = 0
         frameCounter = 0
+        consecutiveWriteFailures = 0
         firstFrameImage = nil
 
         return true
@@ -129,6 +150,24 @@ final class TimelapseWriter: @unchecked Sendable {
         guard !isFinished, let frameDir else {
             lock.unlock()
             return
+        }
+        // If disk writes keep failing (e.g. disk full), stop trying to prevent
+        // CPU waste on frames that will never be saved.
+        guard consecutiveWriteFailures < 10 else {
+            lock.unlock()
+            return
+        }
+        // Check available disk space periodically (every ~30 frames) to avoid
+        // writing until the disk is completely full.  50 MB headroom keeps the
+        // OS and other apps from suffering.
+        if frameCounter % 30 == 0 {
+            let avail = (try? URL(fileURLWithPath: NSHomeDirectory())
+                .resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+                .volumeAvailableCapacityForImportantUsage) ?? 0
+            if avail < 50_000_000 { // 50 MB
+                lock.unlock()
+                return
+            }
         }
 
         totalCameraFrames += 1
@@ -147,52 +186,65 @@ final class TimelapseWriter: @unchecked Sendable {
 
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
-        // Render to the correct output size
-        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-        let srcW = ciImage.extent.width
-        let srcH = ciImage.extent.height
-        let outW = outputSize.width
-        let outH = outputSize.height
+        // Autoreleasepool prevents CIImage/CGImage/UIImage transients from
+        // accumulating over hours of continuous recording.
+        autoreleasepool {
+            // Render to the correct output size
+            let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+            let srcW = ciImage.extent.width
+            let srcH = ciImage.extent.height
+            let outW = outputSize.width
+            let outH = outputSize.height
 
-        let finalImage: CIImage
-        if Int(srcW) != Int(outW) || Int(srcH) != Int(outH) {
-            let scale = max(outW / srcW, outH / srcH)
-            let scaled = ciImage.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-            let cropX = (scaled.extent.width - outW) / 2
-            let cropY = (scaled.extent.height - outH) / 2
-            finalImage = scaled.cropped(to: CGRect(
-                x: scaled.extent.origin.x + cropX,
-                y: scaled.extent.origin.y + cropY,
-                width: outW, height: outH
-            ))
-        } else {
-            finalImage = ciImage
-        }
-
-        // Save thumbnail from first frame
-        if shouldSaveThumb {
-            if let cg = ciContext.createCGImage(finalImage, from: finalImage.extent) {
-                lock.lock()
-                firstFrameImage = cg
-                lock.unlock()
+            let finalImage: CIImage
+            if Int(srcW) != Int(outW) || Int(srcH) != Int(outH) {
+                let scale = max(outW / srcW, outH / srcH)
+                let scaled = ciImage.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+                let cropX = (scaled.extent.width - outW) / 2
+                let cropY = (scaled.extent.height - outH) / 2
+                finalImage = scaled.cropped(to: CGRect(
+                    x: scaled.extent.origin.x + cropX,
+                    y: scaled.extent.origin.y + cropY,
+                    width: outW, height: outH
+                ))
+            } else {
+                finalImage = ciImage
             }
-        }
 
-        // Write JPEG to disk
-        let fileURL = frameDir.appendingPathComponent(String(format: "%08d.jpg", currentIndex))
-        if let cg = ciContext.createCGImage(finalImage, from: finalImage.extent) {
-            let uiImage = UIImage(cgImage: cg)
-            if let data = uiImage.jpegData(compressionQuality: 0.8) {
-                try? data.write(to: fileURL, options: .atomic)
-
-                lock.lock()
-                frameFiles.append(fileURL)
-
-                // If we've exceeded the budget, thin by removing every other frame
-                if frameFiles.count > maxFrames {
-                    thinFrames()
+            // Save thumbnail from first frame
+            if shouldSaveThumb {
+                if let cg = ciContext.createCGImage(finalImage, from: finalImage.extent) {
+                    lock.lock()
+                    firstFrameImage = cg
+                    lock.unlock()
                 }
-                lock.unlock()
+            }
+
+            // Write JPEG to disk
+            let fileURL = frameDir.appendingPathComponent(String(format: "%08d.jpg", currentIndex))
+            if let cg = ciContext.createCGImage(finalImage, from: finalImage.extent) {
+                let uiImage = UIImage(cgImage: cg)
+                if let data = uiImage.jpegData(compressionQuality: 0.8) {
+                    do {
+                        try data.write(to: fileURL, options: .atomic)
+
+                        lock.lock()
+                        frameFiles.append(fileURL)
+                        consecutiveWriteFailures = 0
+
+                        // If we've exceeded the budget, thin by removing every other frame
+                        if frameFiles.count > maxFrames {
+                            thinFrames()
+                        }
+                        lock.unlock()
+                    } catch {
+                        // Disk full or other I/O error — track so we can stop
+                        // wasting CPU if writes are consistently failing.
+                        lock.lock()
+                        consecutiveWriteFailures += 1
+                        lock.unlock()
+                    }
+                }
             }
         }
     }
@@ -222,8 +274,17 @@ final class TimelapseWriter: @unchecked Sendable {
             return nil
         }
         isFinished = true
-        let frames = frameFiles
+        // Filter out any frame files that were deleted by the OS (e.g. cache
+        // cleanup during a long background session) or corrupted by a partial
+        // write.  Without this, finish() silently skips missing frames and can
+        // produce a very short or empty video.
+        let frames = frameFiles.filter { FileManager.default.fileExists(atPath: $0.path) }
         lock.unlock()
+        
+        guard !frames.isEmpty else {
+            cleanupFrameDir()
+            return nil
+        }
 
         let outputURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
             .appendingPathComponent("factum_\(UUID().uuidString).mp4")
@@ -258,41 +319,63 @@ final class TimelapseWriter: @unchecked Sendable {
         assetWriter.startWriting()
         assetWriter.startSession(atSourceTime: .zero)
 
-        // Write each frame at evenly-spaced timestamps across 30 seconds
-        let totalFrames = frames.count
+        // Reuse a single pixel buffer for all frames to avoid memory spikes.
+        // Each 1920×1080 BGRA buffer is ~8MB — allocating 900 would be 7+ GB.
+        let bufferAttrs: [String: Any] = [
+            kCVPixelBufferCGImageCompatibilityKey as String: true,
+            kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
+        ]
+        var reusableBuffer: CVPixelBuffer?
+        CVPixelBufferCreate(
+            nil,
+            Int(outputSize.width), Int(outputSize.height),
+            kCVPixelFormatType_32BGRA,
+            bufferAttrs as CFDictionary,
+            &reusableBuffer
+        )
+        guard let pixelBuffer = reusableBuffer else {
+            cleanupFrameDir()
+            return nil
+        }
+
+        // Write each frame at evenly-spaced timestamps
+        var consecutiveAppendFailures = 0
         for (index, frameURL) in frames.enumerated() {
-            // Wait for writer to be ready
+            // Wait for writer to be ready with exponential backoff
+            var waitMs: UInt64 = 5
             while !input.isReadyForMoreMediaData {
-                try? await Task.sleep(for: .milliseconds(10))
+                try? await Task.sleep(for: .milliseconds(waitMs))
+                waitMs = min(waitMs * 2, 100)
+                if assetWriter.status == .failed { break }
             }
+            
+            // Bail if the writer has entered an error state
+            if assetWriter.status == .failed { break }
 
-            guard let imageData = try? Data(contentsOf: frameURL),
-                  let uiImage = UIImage(data: imageData),
-                  let cgImage = uiImage.cgImage else { continue }
+            // Autoreleasepool prevents transient Data/UIImage/CGImage from
+            // accumulating across 900 iterations — critical for long sessions.
+            let appended: Bool = autoreleasepool {
+                guard let imageData = try? Data(contentsOf: frameURL),
+                      let uiImage = UIImage(data: imageData),
+                      let cgImage = uiImage.cgImage else { return false }
 
-            let time = CMTime(value: Int64(index), timescale: outputFPS)
+                let time = CMTime(value: Int64(index), timescale: outputFPS)
 
-            // Create pixel buffer from CGImage
-            var pixelBuffer: CVPixelBuffer?
-            let attrs: [String: Any] = [
-                kCVPixelBufferCGImageCompatibilityKey as String: true,
-                kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
-            ]
-            CVPixelBufferCreate(
-                nil,
-                Int(outputSize.width), Int(outputSize.height),
-                kCVPixelFormatType_32BGRA,
-                attrs as CFDictionary,
-                &pixelBuffer
-            )
+                CVPixelBufferLockBaseAddress(pixelBuffer, [])
+                let ciImg = CIImage(cgImage: cgImage)
+                ciContext.render(ciImg, to: pixelBuffer, bounds: CGRect(origin: .zero, size: outputSize), colorSpace: colorSpace)
+                CVPixelBufferUnlockBaseAddress(pixelBuffer, [])
 
-            guard let buffer = pixelBuffer else { continue }
-            CVPixelBufferLockBaseAddress(buffer, [])
-            let ciImg = CIImage(cgImage: cgImage)
-            ciContext.render(ciImg, to: buffer, bounds: CGRect(origin: .zero, size: outputSize), colorSpace: colorSpace)
-            CVPixelBufferUnlockBaseAddress(buffer, [])
-
-            adaptor.append(buffer, withPresentationTime: time)
+                return adaptor.append(pixelBuffer, withPresentationTime: time)
+            }
+            if appended {
+                consecutiveAppendFailures = 0
+            } else {
+                consecutiveAppendFailures += 1
+                // If many frames in a row fail to append, the writer is likely
+                // in a bad state — bail out instead of looping through 900 no-ops.
+                if consecutiveAppendFailures >= 20 { break }
+            }
         }
 
         input.markAsFinished()
@@ -302,6 +385,19 @@ final class TimelapseWriter: @unchecked Sendable {
 
         guard assetWriter.status == .completed else { return nil }
         return outputURL
+    }
+
+    /// Called when the system sends a memory warning.  Thin the frame
+    /// buffer by half and double the skip interval — same as hitting the
+    /// max, but triggered earlier by OS pressure.
+    func thinOnMemoryPressure() {
+        lock.lock()
+        guard frameFiles.count > 10 else {
+            lock.unlock()
+            return
+        }
+        thinFrames()
+        lock.unlock()
     }
 
     func cancel() {
@@ -345,10 +441,12 @@ final class CaptureDelegate: NSObject, AVCaptureVideoDataOutputSampleBufferDeleg
         previewSkipCount += 1
         if previewSkipCount >= 3 {
             previewSkipCount = 0
-            if let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
-                let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-                if let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) {
-                    frameHolder.frame = cgImage
+            autoreleasepool {
+                if let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
+                    let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+                    if let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) {
+                        frameHolder.frame = cgImage
+                    }
                 }
             }
         }
@@ -357,6 +455,37 @@ final class CaptureDelegate: NSObject, AVCaptureVideoDataOutputSampleBufferDeleg
         if isRecording && !isOnBreak {
             timelapseWriter?.appendFrame(sampleBuffer: sampleBuffer)
         }
+    }
+}
+
+// MARK: - Recording Mode
+
+enum RecordingMode: String {
+    case timelapse = "Timelapse"
+    case photoTimer = "Photo Timer"
+}
+
+// MARK: - Photo Capture Delegate
+
+final class PhotoCaptureDelegate: NSObject, AVCapturePhotoCaptureDelegate {
+    private let completion: (UIImage?) -> Void
+    
+    init(completion: @escaping (UIImage?) -> Void) {
+        self.completion = completion
+    }
+    
+    func photoOutput(
+        _ output: AVCapturePhotoOutput,
+        didFinishProcessingPhoto photo: AVCapturePhoto,
+        error: Error?
+    ) {
+        guard error == nil,
+              let data = photo.fileDataRepresentation(),
+              let image = UIImage(data: data) else {
+            completion(nil)
+            return
+        }
+        completion(image)
     }
 }
 
@@ -393,11 +522,17 @@ final class TimelapseCaptureManager {
     
     // MARK: Public state
     var isRecording = false
+    var isPaused = false
     var elapsedSeconds = 0
     var isExporting = false
     var exportedVideoURL: URL?
     var thumbnailImage: UIImage?
     var cameraReady = false
+    
+    // MARK: Recording mode
+    var recordingMode: RecordingMode = .timelapse
+    var capturedPhoto: UIImage?
+    var beforePhoto: UIImage?       // Stored separately for before/after posts
     
     // MARK: Timer mode
     var timerMode: TimerMode = .continuous
@@ -409,6 +544,14 @@ final class TimelapseCaptureManager {
     var pomodoroCompletedCycles: Int = 0
     var pomodoroMaxCycles: Int = 0  // 0 means infinite
     var isOnBreak = false
+    
+    // MARK: Subject tracking
+    var currentSubject: String = "General"
+    /// Accumulated subject segments from subject switches during this session.
+    /// Each entry records a subject and how many seconds were spent on it.
+    private(set) var subjectSegments: [(subject: String, seconds: Int)] = []
+    /// Wall-clock timestamp when the current subject segment started.
+    private var subjectSegmentStart: Date?
     
     // MARK: Set time countdown
     var countdownSecondsRemaining: Int = 0
@@ -439,6 +582,8 @@ final class TimelapseCaptureManager {
     // MARK: Capture session
     let captureSession = AVCaptureSession()
     private var videoOutput: AVCaptureVideoDataOutput?
+    private var photoOutput: AVCapturePhotoOutput?
+    private var photoCaptureDelegate: PhotoCaptureDelegate?
     private var currentCameraPosition: AVCaptureDevice.Position = .back
     private var currentDevice: AVCaptureDevice?
     
@@ -451,9 +596,17 @@ final class TimelapseCaptureManager {
     private var captureDelegate: CaptureDelegate?
     private let captureQueue = DispatchQueue(label: "com.factum.capture", qos: .userInitiated)
     
+    // MARK: Wall-clock timing
+    /// Actual start time — used to compute elapsed time from the wall clock
+    /// instead of relying on Timer tick counts, which drift over long sessions.
+    private var recordingStartDate: Date?
+    /// Seconds already counted before the current start (used when resuming from background)
+    private var elapsedBeforeCurrentStart: Int = 0
+    
     // MARK: Background support
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
     private var backgroundDate: Date?
+    private var memoryWarningObserver: NSObjectProtocol?
     
     // MARK: - Setup
     
@@ -463,6 +616,24 @@ final class TimelapseCaptureManager {
         try? AVAudioSession.sharedInstance().setCategory(.ambient, options: [])
         try? AVAudioSession.sharedInstance().setActive(true)
 
+        let session = captureSession
+        
+        // If the session already has inputs and a working photo output, just
+        // make sure it's running — no need to re-configure.
+        if !session.inputs.isEmpty, let existing = photoOutput,
+           session.outputs.contains(where: { $0 === existing }) {
+            let capturedSession = session
+            Task.detached {
+                if !capturedSession.isRunning {
+                    capturedSession.startRunning()
+                }
+                await MainActor.run { [weak self] in
+                    self?.cameraReady = true
+                }
+            }
+            return
+        }
+        
         // Try ultra wide first for wide-angle support, fall back to wide
         let device = bestCamera(for: currentCameraPosition)
         guard let device else { return }
@@ -477,7 +648,6 @@ final class TimelapseCaptureManager {
         output.setSampleBufferDelegate(delegate, queue: captureQueue)
         captureDelegate = delegate
         
-        let session = captureSession
         session.beginConfiguration()
         session.sessionPreset = .hd1920x1080
         
@@ -487,6 +657,14 @@ final class TimelapseCaptureManager {
         if session.canAddOutput(output) {
             session.addOutput(output)
         }
+        
+        // Add photo output for still photo capture (used in photo timer mode)
+        let photo = AVCapturePhotoOutput()
+        if session.canAddOutput(photo) {
+            session.addOutput(photo)
+        }
+        photoOutput = photo
+        
         session.commitConfiguration()
         
         videoOutput = output
@@ -656,6 +834,9 @@ final class TimelapseCaptureManager {
         isOnBreak = false
         pomodoroCompletedCycles = 0
         pomodoroPhase = .study
+        recordingStartDate = Date()
+        elapsedBeforeCurrentStart = 0
+        beginSubjectSegment()
         
         // Lock the current orientation for the entire recording session.
         // This ensures the capture connection angle and the writer's output
@@ -692,10 +873,91 @@ final class TimelapseCaptureManager {
                 self?.tick()
             }
         }
+        
+        // Listen for memory warnings — thin frames aggressively to avoid crash
+        memoryWarningObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleMemoryWarning()
+        }
+    }
+    
+    // MARK: - Photo Timer Mode
+    
+    /// Capture a single still photo using the photo output.
+    func capturePhoto() async -> UIImage? {
+        guard let photoOutput else { return nil }
+        
+        return await withCheckedContinuation { continuation in
+            let settings = AVCapturePhotoSettings()
+            let delegate = PhotoCaptureDelegate { image in
+                continuation.resume(returning: image)
+            }
+            self.photoCaptureDelegate = delegate
+            photoOutput.capturePhoto(with: settings, delegate: delegate)
+        }
+    }
+    
+    /// Start the timer without recording video frames.
+    /// Used in photo timer mode — the timer ticks identically to timelapse mode
+    /// but no TimelapseWriter is created and no frames are captured.
+    func startTimerOnly() {
+        elapsedSeconds = 0
+        isRecording = true
+        exportedVideoURL = nil
+        thumbnailImage = nil
+        isOnBreak = false
+        pomodoroCompletedCycles = 0
+        pomodoroPhase = .study
+        recordingStartDate = Date()
+        elapsedBeforeCurrentStart = 0
+        beginSubjectSegment()
+        
+        // Lock orientation
+        recordingOrientation = detectedOrientation
+        
+        // Set up timer-specific state
+        switch timerMode {
+        case .continuous:
+            break
+        case .pomodoro:
+            pomodoroPhaseSecondsRemaining = pomodoroStudyMinutes * 60
+            pomodoroPhase = .study
+        case .setTime:
+            countdownSecondsRemaining = setTimeDurationMinutes * 60
+        }
+        
+        // No TimelapseWriter, no frame capture — just the tick timer
+        elapsedTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.tick()
+            }
+        }
+        
+        // Stop the camera session to save battery (no preview needed during timer)
+        let session = captureSession
+        Task.detached { session.stopRunning() }
+    }
+    
+    private func handleMemoryWarning() {
+        // Force the writer to thin its frame buffer immediately
+        // This frees up disk-backed data and reduces bookkeeping memory
+        guard let writer = timelapseWriter else { return }
+        writer.thinOnMemoryPressure()
     }
     
     private func tick() {
-        elapsedSeconds += 1
+        guard !isPaused else { return }
+        
+        // Compute elapsed time from wall clock instead of counting ticks.
+        // Timer fires can drift by tens of seconds over multi-hour sessions.
+        if let start = recordingStartDate {
+            elapsedSeconds = elapsedBeforeCurrentStart + Int(Date().timeIntervalSince(start))
+        } else {
+            elapsedSeconds += 1
+        }
         
         switch timerMode {
         case .continuous:
@@ -734,7 +996,17 @@ final class TimelapseCaptureManager {
     }
     
     func stopRecording() {
+        // Snapshot elapsed time so it survives a subsequent resume (e.g. the
+        // user taps Back on the post screen).  Without this, resumeRecording()
+        // would start from elapsedBeforeCurrentStart = 0 and reset the clock.
+        if let start = recordingStartDate {
+            elapsedBeforeCurrentStart += Int(Date().timeIntervalSince(start))
+            elapsedSeconds = elapsedBeforeCurrentStart
+        }
+        recordingStartDate = nil
+        
         isRecording = false
+        isPaused = false
         // Note: recordingOrientation is NOT cleared here — it must persist
         // through export so isLandscape/outputSize stay correct for the
         // writer and PostCaptionView metadata.
@@ -743,8 +1015,95 @@ final class TimelapseCaptureManager {
         captureDelegate?.isRecording = false
         elapsedTimer?.invalidate()
         elapsedTimer = nil
+        // Remove memory warning observer
+        if let observer = memoryWarningObserver {
+            NotificationCenter.default.removeObserver(observer)
+            memoryWarningObserver = nil
+        }
         // Re-sync the connection to the current physical orientation
         configureConnectionOrientation()
+    }
+    
+    // MARK: - Subject Tracking
+    
+    /// Begin tracking the first subject segment. Called when recording/timer starts.
+    private func beginSubjectSegment() {
+        subjectSegments = []
+        subjectSegmentStart = Date()
+    }
+    
+    /// Finalize the current subject segment, recording how long it lasted.
+    private func finalizeCurrentSegment() {
+        guard let start = subjectSegmentStart else { return }
+        let seconds = max(1, Int(Date().timeIntervalSince(start)))
+        // Merge into existing entry for the same subject, or append new
+        if let idx = subjectSegments.firstIndex(where: { $0.subject == currentSubject }) {
+            subjectSegments[idx].seconds += seconds
+        } else {
+            subjectSegments.append((subject: currentSubject, seconds: seconds))
+        }
+        subjectSegmentStart = nil
+    }
+    
+    /// Switch to a different subject mid-session. Finalizes the current segment
+    /// and starts a new one for the new subject.
+    func switchSubject(to newSubject: String) {
+        guard newSubject != currentSubject else { return }
+        finalizeCurrentSegment()
+        currentSubject = newSubject
+        subjectSegmentStart = Date()
+    }
+    
+    /// Returns the finalized subject segments for the completed session.
+    /// Merges any in-progress segment and sorts by time descending.
+    func finalizedSegments() -> [SubjectSegment] {
+        // Finalize any in-progress segment
+        finalizeCurrentSegment()
+        return subjectSegments
+            .map { SubjectSegment(subject: $0.subject, seconds: $0.seconds) }
+            .sorted { $0.seconds > $1.seconds }
+    }
+    
+    // MARK: - Pause / Resume
+    
+    func pauseRecording() {
+        guard isRecording, !isPaused else { return }
+        isPaused = true
+        
+        // Snapshot elapsed time and stop the tick timer
+        if let start = recordingStartDate {
+            elapsedBeforeCurrentStart += Int(Date().timeIntervalSince(start))
+        }
+        recordingStartDate = nil
+        elapsedTimer?.invalidate()
+        elapsedTimer = nil
+        
+        // Snapshot current subject segment time
+        finalizeCurrentSegment()
+        
+        // Pause frame capture
+        captureDelegate?.isRecording = false
+    }
+    
+    func resumeRecording() {
+        guard isRecording, isPaused else { return }
+        isPaused = false
+        
+        // Resume wall-clock tracking from now
+        recordingStartDate = Date()
+        subjectSegmentStart = Date()
+        
+        // Resume frame capture
+        captureDelegate?.isRecording = true
+        captureDelegate?.isOnBreak = isOnBreak
+        
+        // Restart the tick timer (invalidate any stale timer first)
+        elapsedTimer?.invalidate()
+        elapsedTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.tick()
+            }
+        }
     }
     
     // MARK: - Sound
@@ -788,8 +1147,18 @@ final class TimelapseCaptureManager {
     func cleanup() {
         stopRecording()
         recordingOrientation = nil
+        recordingStartDate = nil
+        elapsedBeforeCurrentStart = 0
+        capturedPhoto = nil
+        beforePhoto = nil
+        subjectSegments = []
+        subjectSegmentStart = nil
         stopOrientationDetection()
         endBackgroundTask()
+        if let observer = memoryWarningObserver {
+            NotificationCenter.default.removeObserver(observer)
+            memoryWarningObserver = nil
+        }
         timelapseWriter?.cancel()
         timelapseWriter = nil
         captureDelegate?.timelapseWriter = nil
@@ -802,8 +1171,15 @@ final class TimelapseCaptureManager {
     func handleEnterBackground() {
         guard isRecording else { return }
         
-        // Remember when we went to background so we can account for elapsed time
+        // Snapshot the current elapsed time and clear the start date.
+        // When we return to foreground we'll set a new start date and
+        // resume from the snapshotted value.  This avoids any drift from
+        // Timer suspension in the background.
         backgroundDate = Date()
+        if let start = recordingStartDate {
+            elapsedBeforeCurrentStart = elapsedBeforeCurrentStart + Int(Date().timeIntervalSince(start))
+        }
+        recordingStartDate = nil
         
         // Stop timers — they won't fire in the background anyway
         elapsedTimer?.invalidate()
@@ -826,8 +1202,11 @@ final class TimelapseCaptureManager {
         let secondsInBackground = Int(Date().timeIntervalSince(bgDate))
         backgroundDate = nil
         
-        // Update elapsed time to account for time spent in background
-        elapsedSeconds += secondsInBackground
+        // Resume wall-clock tracking from now, carrying forward the
+        // previously accumulated elapsed time plus background time.
+        elapsedBeforeCurrentStart += secondsInBackground
+        recordingStartDate = Date()
+        elapsedSeconds = elapsedBeforeCurrentStart
         
         // Update timer-specific countdowns
         switch timerMode {
@@ -877,8 +1256,10 @@ final class TimelapseCaptureManager {
             }
         }
         
-        // Restart the capture session if it was interrupted
-        if !captureSession.isRunning {
+        // Restart the capture session if it was interrupted — but only for
+        // timelapse mode where frame capture is active.  In photo timer mode
+        // the session was deliberately stopped to save battery.
+        if recordingMode == .timelapse && !captureSession.isRunning {
             let session = captureSession
             Task.detached {
                 session.startRunning()

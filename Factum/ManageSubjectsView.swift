@@ -49,6 +49,14 @@ struct ManageSubjectsView: View {
                                     Label("Delete", systemImage: "trash")
                                 }
                             }
+                            .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                                Button {
+                                    subjectToEdit = subject
+                                } label: {
+                                    Label("Edit", systemImage: "pencil")
+                                }
+                                .tint(FactumTheme.accent)
+                            }
                     }
                     
                     Button {
@@ -71,9 +79,13 @@ struct ManageSubjectsView: View {
             }
             .scrollContentBackground(.hidden)
             .background(FactumTheme.background)
-            .navigationTitle("Manage Subjects")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("Manage Subjects")
+                        .font(FactumTheme.headlineFont)
+                        .foregroundStyle(FactumTheme.primaryText)
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                         .foregroundStyle(FactumTheme.accent)
@@ -238,8 +250,36 @@ struct EditSubjectView: View {
                 
                 // Save button
                 Button {
-                    subject.name = name.trimmingCharacters(in: .whitespaces)
+                    let newName = name.trimmingCharacters(in: .whitespaces)
+                    let oldName = subject.name
+                    
+                    // Update the subject itself
+                    subject.name = newName
                     subject.colorHex = selectedColor.hexString
+                    
+                    // Cascade rename to all timelapse records that reference the old name
+                    if oldName != newName {
+                        let descriptor = FetchDescriptor<StudyTimelapse>()
+                        if let allTimelapses = try? modelContext.fetch(descriptor) {
+                            for timelapse in allTimelapses {
+                                // Update legacy subject field
+                                if timelapse.subject == oldName {
+                                    timelapse.subject = newName
+                                }
+                                // Update subject segments JSON
+                                var segments = timelapse.subjectSegments
+                                var changed = false
+                                for i in segments.indices where segments[i].subject == oldName {
+                                    segments[i] = SubjectSegment(subject: newName, seconds: segments[i].seconds)
+                                    changed = true
+                                }
+                                if changed {
+                                    timelapse.subjectSegments = segments
+                                }
+                            }
+                        }
+                    }
+                    
                     try? modelContext.save()
                     syncSubjectsToCloud()
                     dismiss()
