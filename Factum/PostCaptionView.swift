@@ -16,6 +16,7 @@ struct PostCaptionView: View {
     var isLandscape: Bool = false
     var capturedPhotos: [UIImage] = []
     var subjectSegments: [SubjectSegment] = []
+    var appLeaveCount: Int = 0
     let onComplete: () -> Void
     var onDiscard: (() -> Void)? = nil
     
@@ -188,6 +189,7 @@ struct PostCaptionView: View {
                     // Save to Camera Roll
                     if videoURL != nil || !capturedPhotos.isEmpty {
                         Button {
+                            Haptics.light()
                             Task { await saveToPhotos() }
                         } label: {
                             HStack(spacing: 8) {
@@ -215,9 +217,13 @@ struct PostCaptionView: View {
             .scrollDismissesKeyboard(.interactively)
             .onTapGesture { focusedField = nil }
             .background(FactumTheme.background)
-            .navigationTitle("New Post")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("New Post")
+                        .font(FactumTheme.headlineFont)
+                        .foregroundStyle(FactumTheme.primaryText)
+                }
                 ToolbarItem(placement: .cancellationAction) {
                     // Go back to the paused timer/timelapse
                     Button("Back") {
@@ -233,6 +239,7 @@ struct PostCaptionView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     // Exit to main feed without posting
                     Button {
+                        Haptics.warning()
                         showDiscardConfirm = true
                     } label: {
                         Image(systemName: "xmark.circle.fill")
@@ -321,6 +328,7 @@ struct PostCaptionView: View {
             isLandscape: isLandscape
         )
         timelapse.afterPhotoData = afterData
+        timelapse.appLeaveCount = appLeaveCount
         if subjectSegments.count > 1 {
             timelapse.subjectSegments = subjectSegments
         }
@@ -341,9 +349,50 @@ struct PostCaptionView: View {
         let capturedUser = users.first(where: { $0.firebaseUID == uid })
         let ctx = modelContext
         
-        // MVP: Cloud upload disabled — video and thumbnail stay local only.
-        // Sync updated user stats to Supabase (totalStudyMinutes was just incremented)
-        Task {
+        // Upload session record + media to Supabase so data is always backed up
+        Task.detached {
+            let uid = capturedTimelapse.authorID
+            let timelapseID = capturedTimelapse.id.uuidString
+            
+            // 1. Upload thumbnail to Supabase Storage
+            if let thumbData = capturedTimelapse.thumbnailData {
+                do {
+                    let thumbURL = try await StorageService.shared.uploadThumbnail(
+                        data: thumbData, userUID: uid, timelapseID: timelapseID
+                    )
+                    await MainActor.run {
+                        capturedTimelapse.thumbnailDownloadURL = thumbURL
+                        try? ctx.save()
+                    }
+                } catch {
+                    print("[SYNC] Thumbnail upload failed: \(error.localizedDescription)")
+                }
+            }
+            
+            // 2. Upload video to Supabase Storage (if exists)
+            if let videoURL = capturedVideoURL {
+                do {
+                    let videoDownloadURL = try await StorageService.shared.uploadVideo(
+                        localURL: videoURL, userUID: uid, timelapseID: timelapseID
+                    )
+                    await MainActor.run {
+                        capturedTimelapse.videoDownloadURL = videoDownloadURL
+                        try? ctx.save()
+                    }
+                } catch {
+                    print("[SYNC] Video upload failed: \(error.localizedDescription)")
+                }
+            }
+            
+            // 3. Save the timelapse record to Supabase (with any uploaded URLs)
+            do {
+                try await SupabaseService.shared.saveTimelapse(capturedTimelapse)
+                print("[SYNC] Timelapse record saved to Supabase")
+            } catch {
+                print("[SYNC] Timelapse record save failed: \(error.localizedDescription)")
+            }
+            
+            // 4. Sync updated user stats
             if let user = capturedUser {
                 try? await SupabaseService.shared.saveUserProfile(user)
             }

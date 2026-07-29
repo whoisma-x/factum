@@ -31,27 +31,31 @@ struct ProfileView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 12) {
+                VStack(spacing: 0) {
                     // Scrollable title row
                     HStack {
                         Text("Profile")
-                            .font(FactumTheme.font(30, weight: .semibold))
+                            .font(FactumTheme.titleFont)
                             .foregroundStyle(FactumTheme.primaryText)
                         Spacer()
                         Button {
                             showSettings = true
                         } label: {
                             Image(systemName: "gearshape")
-                                .font(.system(size: 20))
+                                .font(.system(size: 20, weight: .light))
                                 .foregroundStyle(FactumTheme.secondaryText)
                                 .frame(width: 44, height: 44)
                         }
                     }
-                    .padding(.top, 8)
+                    .padding(.top, FactumTheme.spacing8)
+                    .padding(.bottom, FactumTheme.spacing4)
                     
                     if let user = currentUser {
                         profileHeader(user: user)
+                            .padding(.bottom, FactumTheme.spacing16)
+                        
                         statsGrid(user: user)
+                            .padding(.bottom, FactumTheme.spacing12)
                         
                         // Detailed stats link
                         NavigationLink {
@@ -68,12 +72,24 @@ struct ProfileView: View {
                                     .font(.system(size: 12, weight: .semibold))
                                     .foregroundStyle(FactumTheme.tertiaryText)
                             }
-                            .padding(16)
+                            .padding(FactumTheme.spacing16)
                             .background(FactumTheme.cardBackground)
                             .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .shadow(color: FactumTheme.cardShadow, radius: 4, x: 0, y: 1)
                         }
+                        .overlay {
+                            GeometryReader { geo in
+                                Color.clear.preference(
+                                    key: StatsCardFrameKey.self,
+                                    value: geo.frame(in: .global)
+                                )
+                            }
+                        }
+                        .padding(.bottom, FactumTheme.spacing32)
                         
                         studyHistorySection
+                            .padding(.bottom, FactumTheme.spacing32)
+                        
                         myPostsSection
                     } else if AuthService.shared.isSignedIn {
                         // Signed in but local profile hasn't synced yet
@@ -242,10 +258,12 @@ struct ProfileView: View {
     // MARK: - Study History
     
     private var studyHistorySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: FactumTheme.spacing12) {
             Text("This Week")
-                .font(FactumTheme.headlineFont)
-                .foregroundStyle(FactumTheme.primaryText)
+                .font(FactumTheme.font(14, weight: .semibold))
+                .foregroundStyle(FactumTheme.tertiaryText)
+                .textCase(.uppercase)
+                .tracking(1)
             
             // Weekly activity grid — computed from real session data
             HStack(spacing: 6) {
@@ -287,11 +305,13 @@ struct ProfileView: View {
     @State private var showAllSessions = false
     
     private var myPostsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: FactumTheme.spacing12) {
             HStack {
                 Text("My Sessions")
-                    .font(FactumTheme.headlineFont)
-                    .foregroundStyle(FactumTheme.primaryText)
+                    .font(FactumTheme.font(14, weight: .semibold))
+                    .foregroundStyle(FactumTheme.tertiaryText)
+                    .textCase(.uppercase)
+                    .tracking(1)
                 
                 Spacer()
                 
@@ -307,18 +327,11 @@ struct ProfileView: View {
             }
             
             if userTimelapses.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "video.slash")
-                        .font(.system(size: 30))
-                        .foregroundStyle(FactumTheme.tertiaryText)
-                    Text("No sessions yet")
-                        .font(FactumTheme.bodyFont)
-                        .foregroundStyle(FactumTheme.secondaryText)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 30)
-                .background(FactumTheme.cardBackground)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
+                Text("Your recorded sessions will appear here.")
+                    .font(FactumTheme.captionFont)
+                    .foregroundStyle(FactumTheme.tertiaryText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, FactumTheme.spacing16)
             } else {
                 // Show recent sessions as full cards (up to 3)
                 ForEach(Array(userTimelapses.prefix(3))) { timelapse in
@@ -351,6 +364,7 @@ struct ProfileView: View {
             
             // Google Sign-In button
             Button {
+                Haptics.medium()
                 Task {
                     try? await AuthService.shared.signInWithGoogle()
                 }
@@ -438,7 +452,7 @@ struct EditProfileView: View {
                             .overlay(
                                 Image(systemName: "pencil")
                                     .font(.system(size: 12, weight: .bold))
-                                    .foregroundStyle(.black)
+                                    .foregroundStyle(FactumTheme.accentText)
                             )
                     }
                 }
@@ -488,9 +502,13 @@ struct EditProfileView: View {
                     to: nil, from: nil, for: nil
                 )
             }
-            .navigationTitle("Edit Profile")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("Edit Profile")
+                        .font(FactumTheme.headlineFont)
+                        .foregroundStyle(FactumTheme.primaryText)
+                }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                         .foregroundStyle(FactumTheme.accent)
@@ -572,7 +590,7 @@ struct SettingsView: View {
                     HStack(spacing: 12) {
                         Image(systemName: "paintbrush.fill")
                             .foregroundStyle(FactumTheme.secondaryText)
-                            .frame(width: 24)
+                            .frame(width: 28)
                         Picker("Appearance", selection: $appearanceMode) {
                             Text("Light").tag(1)
                             Text("Dark").tag(2)
@@ -583,14 +601,7 @@ struct SettingsView: View {
                     NavigationLink {
                         ManageSubjectsView()
                     } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: "book.fill")
-                                .foregroundStyle(FactumTheme.secondaryText)
-                                .frame(width: 24)
-                            Text("Manage Subjects")
-                                .font(FactumTheme.bodyFont)
-                                .foregroundStyle(FactumTheme.primaryText)
-                        }
+                        settingsRow(icon: "book.fill", title: "Manage Subjects")
                     }
                     .listRowBackground(FactumTheme.cardBackground)
                 } header: {
@@ -603,7 +614,7 @@ struct SettingsView: View {
                     HStack(spacing: 12) {
                         Image(systemName: "photo.on.rectangle.angled")
                             .foregroundStyle(FactumTheme.secondaryText)
-                            .frame(width: 24)
+                            .frame(width: 28)
                         
                         if isRequestingScope {
                             HStack {
@@ -670,6 +681,7 @@ struct SettingsView: View {
                 
                 Section {
                     Button {
+                        Haptics.warning()
                         Task {
                             // Save current stats to Supabase before signing out
                             if let user = currentUser {
@@ -697,7 +709,6 @@ struct SettingsView: View {
             } message: {
                 Text(scopeErrorMessage)
             }
-            .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
@@ -729,7 +740,7 @@ struct SettingsView: View {
                 .foregroundStyle(FactumTheme.secondaryText)
                 .frame(width: 28)
             Text(title)
-                .font(FactumTheme.font(16, weight: .light))
+                .font(FactumTheme.bodyFont)
                 .foregroundStyle(FactumTheme.primaryText)
         }
     }
@@ -754,9 +765,13 @@ struct AllSessionsView: View {
                 .padding(.bottom, 40)
             }
             .background(FactumTheme.background)
-            .navigationTitle("All Sessions")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("All Sessions")
+                        .font(FactumTheme.headlineFont)
+                        .foregroundStyle(FactumTheme.primaryText)
+                }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
                         .foregroundStyle(FactumTheme.accent)
@@ -770,27 +785,69 @@ struct AllSessionsView: View {
     }
 }
 
-// MARK: - Settings Placeholder View
+// MARK: - Settings Sub-Pages
 
 struct SettingsPlaceholderView: View {
     let title: String
     
+    private var icon: String {
+        switch title {
+        case "Notifications": return "bell.fill"
+        case "Privacy": return "lock.shield.fill"
+        case "Help & Support": return "envelope.fill"
+        default: return "info.circle.fill"
+        }
+    }
+    
+    private var description: String {
+        switch title {
+        case "Notifications":
+            return "Notification preferences will let you control study reminders, friend activity, and session alerts."
+        case "Privacy":
+            return "Privacy settings will let you manage who can see your study sessions and profile information."
+        case "Help & Support":
+            return "Have a question or found a bug? We'd love to hear from you."
+        default:
+            return "Factum helps you build consistent study habits through timelapses, tracking, and accountability."
+        }
+    }
+    
     var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "wrench.and.screwdriver")
-                .font(.system(size: 40))
-                .foregroundStyle(FactumTheme.tertiaryText)
-            Text(title)
-                .font(FactumTheme.headlineFont)
-                .foregroundStyle(FactumTheme.primaryText)
-            Text("Coming soon")
-                .font(FactumTheme.bodyFont)
+        VStack(spacing: FactumTheme.spacing24) {
+            Spacer()
+            
+            Image(systemName: icon)
+                .font(.system(size: 32, weight: .light))
                 .foregroundStyle(FactumTheme.secondaryText)
+            
+            VStack(spacing: FactumTheme.spacing8) {
+                Text(title)
+                    .font(FactumTheme.headlineFont)
+                    .foregroundStyle(FactumTheme.primaryText)
+                
+                Text(description)
+                    .font(FactumTheme.bodyFont)
+                    .foregroundStyle(FactumTheme.secondaryText)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(4)
+            }
+            .padding(.horizontal, FactumTheme.spacing32)
+            
+            Spacer()
+            Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(FactumTheme.background)
-        .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Text(title)
+                    .font(FactumTheme.headlineFont)
+                    .foregroundStyle(FactumTheme.primaryText)
+            }
+        }
+        .toolbarBackground(FactumTheme.background, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
     }
 }
 

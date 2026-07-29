@@ -599,10 +599,49 @@ final class SupabaseService {
             }
             print("[SYNC] Timelapses: \(insertedCount) restored from cloud, \(updatedCount) updated, \(thumbDownloaded) thumbnails downloaded")
             
-            // Sync comments for all timelapses that have comments
+            // Push any local sessions that aren't on Supabase yet (catches failed uploads,
+            // app kills during upload, or sessions created while offline)
+            let cloudIDSet = Set(rows.map { $0.id.uuidString })
+            let allLocalAfterSync = (try? context.fetch(FetchDescriptor<StudyTimelapse>())) ?? []
+            let unsyncedLocal = allLocalAfterSync.filter {
+                $0.authorID == uid && !cloudIDSet.contains($0.id.uuidString)
+            }
+            if !unsyncedLocal.isEmpty {
+                var uploadedCount = 0
+                for timelapse in unsyncedLocal {
+                    do {
+                        // Upload thumbnail if we have data but no cloud URL
+                        if timelapse.thumbnailDownloadURL == nil, let thumbData = timelapse.thumbnailData {
+                            let thumbURL = try await StorageService.shared.uploadThumbnail(
+                                data: thumbData, userUID: timelapse.authorID, timelapseID: timelapse.id.uuidString
+                            )
+                            timelapse.thumbnailDownloadURL = thumbURL
+                        }
+                        try await saveTimelapse(timelapse)
+                        uploadedCount += 1
+                    } catch {
+                        print("[SYNC] Failed to push local session \(timelapse.id.uuidString.prefix(8)): \(error)")
+                    }
+                }
+                print("[SYNC] Pushed \(uploadedCount)/\(unsyncedLocal.count) unsynced local sessions to Supabase")
+            }
+            
+            // Sync comments for all timelapses that have comments (parallel, max 4 concurrent)
             let allTimelapses = (try? context.fetch(FetchDescriptor<StudyTimelapse>())) ?? []
-            for tl in allTimelapses where tl.commentCount > 0 {
-                await syncComments(forTimelapse: tl.id, context: context)
+            let timelapsesWithComments = allTimelapses.filter { $0.commentCount > 0 }
+            await withTaskGroup(of: Void.self) { group in
+                var running = 0
+                for tl in timelapsesWithComments {
+                    if running >= 4 {
+                        await group.next()
+                        running -= 1
+                    }
+                    let tlID = tl.id
+                    group.addTask { [weak self] in
+                        await self?.syncComments(forTimelapse: tlID, context: context)
+                    }
+                    running += 1
+                }
             }
         } catch {
             print("[SYNC] Timelapse sync FAILED: \(error)")

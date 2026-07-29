@@ -179,6 +179,7 @@ struct StatsView: View {
     private var dateNavigator: some View {
         HStack {
             Button {
+                Haptics.light()
                 withAnimation(.easeInOut(duration: 0.2)) { navigateBack() }
             } label: {
                 Image(systemName: "chevron.left")
@@ -198,6 +199,7 @@ struct StatsView: View {
             Spacer()
             
             Button {
+                Haptics.light()
                 withAnimation(.easeInOut(duration: 0.2)) { navigateForward() }
             } label: {
                 Image(systemName: "chevron.right")
@@ -245,6 +247,7 @@ struct StatsView: View {
         let totalSeconds = filteredTimelapses.reduce(0) { $0 + $1.durationSeconds }
         let sessionCount = filteredTimelapses.count
         let uniqueSubjects = Set(filteredTimelapses.flatMap { $0.subjectSegments.map(\.subject) }).count
+        let totalLeaves = filteredTimelapses.reduce(0) { $0 + $1.appLeaveCount }
         
         return VStack(alignment: .leading, spacing: 12) {
             Text("Summary")
@@ -255,6 +258,18 @@ struct StatsView: View {
                 summaryCard(value: formatDuration(totalSeconds), label: "Total Time")
                 summaryCard(value: "\(sessionCount)", label: "Sessions")
                 summaryCard(value: "\(uniqueSubjects)", label: "Subjects")
+            }
+            
+            HStack(spacing: 12) {
+                summaryCard(value: "\(totalLeaves)", label: "App Leaves")
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .strokeBorder(totalLeaves == 0 ? .green.opacity(0.3) : .red.opacity(0.3), lineWidth: 1)
+                    )
+                
+                // Average per session
+                let avg = sessionCount > 0 ? Double(totalLeaves) / Double(sessionCount) : 0
+                summaryCard(value: String(format: "%.1f", avg), label: "Avg per Session")
             }
             
             // Most studied highlights

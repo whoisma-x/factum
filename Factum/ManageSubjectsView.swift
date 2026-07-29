@@ -60,6 +60,7 @@ struct ManageSubjectsView: View {
                     }
                     
                     Button {
+                        Haptics.light()
                         showAddSubject = true
                     } label: {
                         HStack(spacing: 10) {
@@ -209,6 +210,7 @@ struct EditSubjectView: View {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 6), spacing: 12) {
                         ForEach(presetColors, id: \.0) { colorName, color in
                             Button {
+                                Haptics.selection()
                                 selectedColor = color
                             } label: {
                                 Circle()
@@ -250,6 +252,7 @@ struct EditSubjectView: View {
                 
                 // Save button
                 Button {
+                    Haptics.medium()
                     let newName = name.trimmingCharacters(in: .whitespaces)
                     let oldName = subject.name
                     
@@ -306,9 +309,13 @@ struct EditSubjectView: View {
                     to: nil, from: nil, for: nil
                 )
             }
-            .navigationTitle("Edit Subject")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("Edit Subject")
+                        .font(FactumTheme.headlineFont)
+                        .foregroundStyle(FactumTheme.primaryText)
+                }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                         .foregroundStyle(FactumTheme.accent)
@@ -385,6 +392,7 @@ struct AddSubjectView: View {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 6), spacing: 12) {
                         ForEach(presetColors, id: \.0) { colorName, color in
                             Button {
+                                Haptics.selection()
                                 selectedColor = color
                             } label: {
                                 Circle()
@@ -426,6 +434,7 @@ struct AddSubjectView: View {
                 
                 // Save button
                 Button {
+                    Haptics.medium()
                     let nextOrder = (subjects.last?.sortOrder ?? 0) + 1
                     let subject = StudySubject(
                         name: name,
@@ -460,9 +469,13 @@ struct AddSubjectView: View {
                     to: nil, from: nil, for: nil
                 )
             }
-            .navigationTitle("New Subject")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("New Subject")
+                        .font(FactumTheme.headlineFont)
+                        .foregroundStyle(FactumTheme.primaryText)
+                }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                         .foregroundStyle(FactumTheme.accent)

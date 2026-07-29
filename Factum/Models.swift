@@ -114,6 +114,7 @@ final class StudyTimelapse {
     var likedByUIDs: [String]
     var commentCount: Int
     var googlePhotosBackedUp: Bool
+    var appLeaveCount: Int = 0
     var subjectSegmentsJSON: String? // JSON-encoded [SubjectSegment]
     
     /// Decoded subject segments. Returns a single segment from `subject` + `durationSeconds` if no JSON is stored (backwards compatibility).
@@ -198,6 +199,7 @@ final class StudyTimelapse {
         self.likedByUIDs = []
         self.commentCount = 0
         self.googlePhotosBackedUp = false
+        self.appLeaveCount = 0
     }
 }
 

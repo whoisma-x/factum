@@ -22,6 +22,25 @@ struct FactumTheme {
     static let separator = Color(light: Color(red: 0.84, green: 0.82, blue: 0.78), dark: Color(red: 0.22, green: 0.20, blue: 0.18))
     static let destructive = Color(red: 0.78, green: 0.28, blue: 0.24)
 
+    // MARK: - Spacing Scale
+    static let spacing4: CGFloat = 4
+    static let spacing8: CGFloat = 8
+    static let spacing12: CGFloat = 12
+    static let spacing16: CGFloat = 16
+    static let spacing24: CGFloat = 24
+    static let spacing32: CGFloat = 32
+    
+    // MARK: - Corner Radii
+    static let cornerBadge: CGFloat = 8       // Tags, badges, small chips
+    static let cornerField: CGFloat = 12      // Text fields, list rows
+    static let cornerCard: CGFloat = 14       // Cards, containers
+    static let cornerSheet: CGFloat = 22      // Sheets, modals, tab bar
+
+    // MARK: - Shadows (subtle depth — cards feel layered, not flat)
+    static let cardShadow: Color = Color(light: Color.black.opacity(0.06), dark: Color.black.opacity(0.3))
+    static let cardShadowRadius: CGFloat = 8
+    static let cardShadowY: CGFloat = 2
+
     // MARK: - Font (Serif, light weight — thin and quiet)
     static func font(_ size: CGFloat, weight: Font.Weight = .light) -> Font {
         .system(size: size, weight: weight, design: .serif)
@@ -81,6 +100,7 @@ struct FactumCardModifier: ViewModifier {
             .padding(16)
             .background(FactumTheme.cardBackground)
             .clipShape(OrganicRect(base: 14))
+            .shadow(color: FactumTheme.cardShadow, radius: FactumTheme.cardShadowRadius, x: 0, y: FactumTheme.cardShadowY)
     }
 }
 
@@ -108,5 +128,31 @@ struct FactumButtonStyle: ButtonStyle {
 extension View {
     func factumCard() -> some View {
         modifier(FactumCardModifier())
+    }
+}
+
+// MARK: - Haptics
+
+enum Haptics {
+    static func light() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+    static func medium() {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+    }
+    static func heavy() {
+        UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+    }
+    static func success() {
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+    }
+    static func warning() {
+        UINotificationFeedbackGenerator().notificationOccurred(.warning)
+    }
+    static func error() {
+        UINotificationFeedbackGenerator().notificationOccurred(.error)
+    }
+    static func selection() {
+        UISelectionFeedbackGenerator().selectionChanged()
     }
 }

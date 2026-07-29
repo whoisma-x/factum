@@ -9,6 +9,7 @@
 import SwiftUI
 import SwiftData
 import AVFoundation
+import CallKit
 
 // MARK: - Camera Phase
 
@@ -25,6 +26,10 @@ enum CameraPhase {
 // MARK: - Camera View
 
 struct TimelapseCameraView: View {
+    // Tutorial mode — when true, shows coach marks overlay for subjects + lock mode
+    var isTutorialMode: Bool = false
+    var onTutorialFinished: (() -> Void)?
+    
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
     @Query(sort: \StudySubject.sortOrder) private var subjects: [StudySubject]
@@ -51,6 +56,13 @@ struct TimelapseCameraView: View {
     @State private var photoBefore = false
     @State private var photoAfterEnabled = false
     @State private var lockMode = false
+    @State private var unlockProgress: CGFloat = 0
+    @State private var holdStartDate: Date?
+    
+    // App-leave counter
+    @State private var appLeaveCount: Int = 0
+    @State private var wasPhoneCall = false
+    private let callObserver = CXCallObserver()
     
     // Pinch-to-zoom baseline
     @State private var zoomAtGestureStart: CGFloat = 1.0
@@ -59,6 +71,11 @@ struct TimelapseCameraView: View {
     @State private var showDiscardConfirm = false
     @State private var showSubjectPicker = false
     @State private var showAddSubject = false
+    @State private var showSetupSubjectPicker = false
+    
+    // Camera tutorial state
+    @State private var showCameraTutorialOverlay = false
+    @State private var subjectPickerFrame: CGRect = .zero
     
     /// Adaptive background for camera overlay elements:
     /// Light mode — translucent white (matches Start Recording style)
@@ -78,7 +95,21 @@ struct TimelapseCameraView: View {
     
     var body: some View {
         NavigationStack {
-            cameraContent
+            ZStack {
+                cameraContent
+                
+                // Camera tutorial overlay (shown when opened from tutorial)
+                if showCameraTutorialOverlay {
+                    CameraTutorialOverlay(
+                        isShowing: $showCameraTutorialOverlay,
+                        onFinished: {
+                            onTutorialFinished?()
+                        },
+                        subjectPickerFrame: subjectPickerFrame
+                    )
+                    .zIndex(200)
+                }
+            }
                 .task { await setupCamera() }
                 .onDisappear { handleDisappear() }
                 .onChange(of: phase) { _, newPhase in handlePhaseChange(newPhase) }
@@ -86,6 +117,14 @@ struct TimelapseCameraView: View {
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in handleBecomeActive() }
                 .fullScreenCover(isPresented: $showPostCaption) { postCaptionSheet }
                 .onChange(of: captureManager.isRecording) { _, newValue in handleRecordingChange(newValue) }
+                .onAppear {
+                    if isTutorialMode {
+                        // Delay to let the setup screen render and report its frame
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                            showCameraTutorialOverlay = true
+                        }
+                    }
+                }
         }
     }
     
@@ -109,6 +148,9 @@ struct TimelapseCameraView: View {
     
     private func handleResignActive() {
         if phase == .recording || phase == .timerRunning {
+            // Check if this resign is from a phone call (don't count as leaving)
+            wasPhoneCall = callObserver.calls.contains { !$0.hasEnded }
+            
             if lockMode {
                 // Lock mode — end session when leaving the app
                 cancelDimTimer()
@@ -127,6 +169,10 @@ struct TimelapseCameraView: View {
     
     private func handleBecomeActive() {
         if phase == .recording || phase == .timerRunning {
+            if !wasPhoneCall {
+                appLeaveCount += 1
+            }
+            wasPhoneCall = false
             captureManager.handleEnterForeground()
             wakeScreen()
         }
@@ -212,12 +258,13 @@ struct TimelapseCameraView: View {
             return [before ?? after].compactMap { $0 }
         }()
         return PostCaptionView(
-            durationSeconds: captureManager.elapsedSeconds,
+            durationSeconds: captureManager.studySeconds,
             videoURL: exportedVideoURL,
             thumbnailData: thumbnailData,
             isLandscape: captureManager.isLandscape,
             capturedPhotos: photos,
             subjectSegments: captureManager.finalizedSegments(),
+            appLeaveCount: appLeaveCount,
             onComplete: {
                 showPostCaption = false
                 captureManager.cleanup()
@@ -384,87 +431,55 @@ struct TimelapseCameraView: View {
                 .padding(.horizontal, 24)
             }
             
-            // Subject picker
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("Subject")
-                        .font(FactumTheme.subheadlineFont)
-                        .foregroundStyle(FactumTheme.primaryText)
+            // Subject picker — tap to open selection sheet
+            Button {
+                showSetupSubjectPicker = true
+            } label: {
+                HStack(spacing: 12) {
+                    Circle()
+                        .fill(StudySubject.color(for: captureManager.currentSubject, in: subjects))
+                        .frame(width: 10, height: 10)
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Subject")
+                            .font(FactumTheme.smallFont)
+                            .foregroundStyle(FactumTheme.tertiaryText)
+                        Text(captureManager.currentSubject)
+                            .font(FactumTheme.subheadlineFont)
+                            .foregroundStyle(FactumTheme.primaryText)
+                    }
                     
                     Spacer()
                     
-                    // Scroll hint — visible when subjects overflow
-                    if subjects.count > 3 {
-                        HStack(spacing: 4) {
-                            Text("Swipe")
-                                .font(FactumTheme.font(11, weight: .light))
-                                .foregroundStyle(FactumTheme.tertiaryText)
-                            Image(systemName: "arrow.right")
-                                .font(.system(size: 9, weight: .medium))
-                                .foregroundStyle(FactumTheme.tertiaryText)
-                        }
-                        .transition(.opacity)
-                    }
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(FactumTheme.tertiaryText)
                 }
-                
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(subjects) { studySubject in
-                            Button {
-                                captureManager.currentSubject = studySubject.name
-                            } label: {
-                                HStack(spacing: 6) {
-                                    Circle()
-                                        .fill(studySubject.color)
-                                        .frame(width: 8, height: 8)
-                                    Text(studySubject.name)
-                                        .font(FactumTheme.captionFont)
-                                }
-                                .foregroundStyle(
-                                    captureManager.currentSubject == studySubject.name
-                                    ? Color.black
-                                    : FactumTheme.secondaryText
-                                )
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .background(
-                                    captureManager.currentSubject == studySubject.name
-                                    ? studySubject.color
-                                    : FactumTheme.elevated
-                                )
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
-                            }
-                        }
-                        
-                        Button {
-                            showAddSubject = true
-                        } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: "plus")
-                                    .font(.system(size: 11, weight: .bold))
-                                Text("New")
-                                    .font(FactumTheme.captionFont)
-                            }
-                            .foregroundStyle(FactumTheme.accent)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(FactumTheme.cardBackground)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .strokeBorder(FactumTheme.separator, lineWidth: 1)
-                            )
-                        }
-                    }
-                }
+                .padding(FactumTheme.spacing16)
+                .background(FactumTheme.cardBackground)
+                .clipShape(RoundedRectangle(cornerRadius: FactumTheme.cornerField))
             }
             .padding(.horizontal, 24)
+            .overlay {
+                GeometryReader { geo in
+                    Color.clear
+                        .onAppear { subjectPickerFrame = geo.frame(in: .global) }
+                        .onChange(of: geo.size) { subjectPickerFrame = geo.frame(in: .global) }
+                }
+            }
+            .sheet(isPresented: $showSetupSubjectPicker) {
+                setupSubjectPickerSheet
+                    .presentationDetents([.medium])
+                    .presentationDragIndicator(.visible)
+                    .presentationBackground(FactumTheme.background)
+            }
             .sheet(isPresented: $showAddSubject) {
                 AddSubjectView()
             }
             
             // Next button
             Button {
+                Haptics.light()
                 // Apply custom time settings
                 if captureManager.timerMode == .setTime {
                     captureManager.setTimeDurationMinutes = customHours * 60 + customMinutes
@@ -708,6 +723,7 @@ struct TimelapseCameraView: View {
     private func recordingModeButton(mode: RecordingMode, label: String) -> some View {
         let isSelected = captureManager.recordingMode == mode
         return Button {
+            Haptics.selection()
             withAnimation(.easeInOut(duration: 0.2)) {
                 captureManager.recordingMode = mode
             }
@@ -759,6 +775,7 @@ struct TimelapseCameraView: View {
                 
                 // Flip camera
                 Button {
+                    Haptics.light()
                     captureManager.flipCamera()
                     zoomAtGestureStart = captureManager.currentZoomFactor
                 } label: {
@@ -801,6 +818,7 @@ struct TimelapseCameraView: View {
                 
                 // Start recording button
                 Button {
+                    Haptics.medium()
                     savedBrightness = UIScreen.main.brightness
                     // Flash feedback
                     showRecordFlash = true
@@ -827,6 +845,7 @@ struct TimelapseCameraView: View {
         }
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
+            Haptics.light()
             captureManager.flipCamera()
             zoomAtGestureStart = captureManager.currentZoomFactor
         }
@@ -877,6 +896,7 @@ struct TimelapseCameraView: View {
                 HStack {
                     if !lockMode {
                         Button {
+                            Haptics.light()
                             cancelDimTimer()
                             restoreBrightness()
                             captureManager.pauseRecording()
@@ -894,6 +914,7 @@ struct TimelapseCameraView: View {
                     
                     // Flip camera
                     Button {
+                        Haptics.light()
                         captureManager.flipCamera()
                         zoomAtGestureStart = captureManager.currentZoomFactor
                     } label: {
@@ -923,6 +944,12 @@ struct TimelapseCameraView: View {
                 lockButton
                     .padding(.top, 12)
                 
+                // App leave counter
+                if appLeaveCount > 0 {
+                    leaveCounter(isCamera: true)
+                        .padding(.top, 8)
+                }
+                
                 Spacer()
                 
                 // Bottom controls
@@ -932,6 +959,7 @@ struct TimelapseCameraView: View {
                     
                     // Stop button
                     Button {
+                        Haptics.medium()
                         cancelDimTimer()
                         restoreBrightness()
                         captureManager.stopRecording()
@@ -957,6 +985,11 @@ struct TimelapseCameraView: View {
             // Paused overlay
             if captureManager.isPaused {
                 pausedOverlay(isCamera: true)
+            }
+            
+            // Screen lock overlay (covers everything when lock mode is active)
+            if lockMode && !captureManager.isPaused {
+                screenLockOverlay(isCamera: true)
             }
         }
     }
@@ -1194,6 +1227,7 @@ struct TimelapseCameraView: View {
                 
                 // Flip camera
                 Button {
+                    Haptics.light()
                     captureManager.flipCamera()
                     zoomAtGestureStart = captureManager.currentZoomFactor
                 } label: {
@@ -1220,6 +1254,7 @@ struct TimelapseCameraView: View {
                 
                 // Shutter button
                 Button {
+                    Haptics.medium()
                     takePhoto()
                 } label: {
                     ZStack {
@@ -1239,6 +1274,7 @@ struct TimelapseCameraView: View {
         }
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
+            Haptics.light()
             captureManager.flipCamera()
             zoomAtGestureStart = captureManager.currentZoomFactor
         }
@@ -1251,6 +1287,7 @@ struct TimelapseCameraView: View {
             // Top bar
             HStack {
                 Button {
+                    Haptics.light()
                     captureManager.capturedPhoto = nil
                     captureManager.beforePhoto = nil
                     thumbnailData = nil
@@ -1292,6 +1329,7 @@ struct TimelapseCameraView: View {
             
             // Start Timer button
             Button {
+                Haptics.medium()
                 startTimerFromConfirm()
             } label: {
                 Text("Start Timer")
@@ -1316,6 +1354,7 @@ struct TimelapseCameraView: View {
                 HStack {
                     if !lockMode {
                         Button {
+                            Haptics.light()
                             cancelDimTimer()
                             restoreBrightness()
                             captureManager.pauseRecording()
@@ -1364,10 +1403,17 @@ struct TimelapseCameraView: View {
                 lockButton
                     .padding(.top, 12)
                 
+                // App leave counter
+                if appLeaveCount > 0 {
+                    leaveCounter(isCamera: false)
+                        .padding(.top, 8)
+                }
+                
                 Spacer()
                 
                 // End Session button
                 Button {
+                    Haptics.medium()
                     cancelDimTimer()
                     restoreBrightness()
                     captureManager.stopRecording()
@@ -1388,6 +1434,11 @@ struct TimelapseCameraView: View {
             // Paused overlay
             if captureManager.isPaused {
                 pausedOverlay(isCamera: false)
+            }
+            
+            // Screen lock overlay (covers everything when lock mode is active)
+            if lockMode && !captureManager.isPaused {
+                screenLockOverlay(isCamera: false)
             }
         }
     }
@@ -1614,11 +1665,98 @@ struct TimelapseCameraView: View {
                 .padding(.horizontal, 20)
                 .padding(.top, 8)
             }
-            .navigationTitle("Switch Subject")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("Switch Subject")
+                        .font(FactumTheme.headlineFont)
+                        .foregroundStyle(FactumTheme.primaryText)
+                }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { showSubjectPicker = false }
+                        .foregroundStyle(FactumTheme.accent)
+                }
+            }
+            .toolbarBackground(FactumTheme.background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+        }
+    }
+    
+    // MARK: - Setup Subject Picker Sheet
+    
+    /// Subject picker used on the setup screen (before recording starts).
+    private var setupSubjectPickerSheet: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 10) {
+                    ForEach(subjects) { studySubject in
+                        Button {
+                            captureManager.currentSubject = studySubject.name
+                            showSetupSubjectPicker = false
+                        } label: {
+                            HStack(spacing: 12) {
+                                Circle()
+                                    .fill(studySubject.color)
+                                    .frame(width: 12, height: 12)
+                                Text(studySubject.name)
+                                    .font(FactumTheme.bodyFont)
+                                    .foregroundStyle(FactumTheme.primaryText)
+                                Spacer()
+                                if captureManager.currentSubject == studySubject.name {
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 14, weight: .bold))
+                                        .foregroundStyle(FactumTheme.accent)
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 14)
+                            .background(
+                                captureManager.currentSubject == studySubject.name
+                                ? studySubject.color.opacity(0.15)
+                                : FactumTheme.cardBackground
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                        }
+                    }
+                    
+                    // Add new subject button
+                    Button {
+                        showSetupSubjectPicker = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            showAddSubject = true
+                        }
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(FactumTheme.accent)
+                            Text("New Subject")
+                                .font(FactumTheme.bodyFont)
+                                .foregroundStyle(FactumTheme.accent)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 14)
+                        .background(FactumTheme.cardBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .strokeBorder(FactumTheme.separator, lineWidth: 1)
+                        )
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("Select Subject")
+                        .font(FactumTheme.headlineFont)
+                        .foregroundStyle(FactumTheme.primaryText)
+                }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { showSetupSubjectPicker = false }
                         .foregroundStyle(FactumTheme.accent)
                 }
             }
@@ -1637,6 +1775,7 @@ struct TimelapseCameraView: View {
         let bgOff: Color = isOnCamera ? .black.opacity(0.4) : FactumTheme.elevated
         
         return Button {
+            Haptics.light()
             withAnimation(.easeInOut(duration: 0.2)) {
                 lockMode.toggle()
             }
@@ -1659,6 +1798,112 @@ struct TimelapseCameraView: View {
         } message: {
             Text("Ends your session and saves your progress when you leave the app. Also hides the pause button so you can't accidentally interrupt your session.")
         }
+    }
+    
+    // MARK: - Screen Lock Overlay
+    
+    private func screenLockOverlay(isCamera: Bool) -> some View {
+        ZStack {
+            (isCamera ? Color.black.opacity(0.85) : FactumTheme.background.opacity(0.95))
+                .ignoresSafeArea()
+            
+            VStack(spacing: 16) {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 40))
+                    .foregroundStyle(isCamera ? .white.opacity(0.6) : FactumTheme.secondaryText.opacity(0.6))
+                
+                Text("Screen Locked")
+                    .font(FactumTheme.font(20, weight: .semibold))
+                    .foregroundStyle(isCamera ? .white.opacity(0.8) : FactumTheme.primaryText)
+                
+                // Timer still visible
+                Text(formatTime(captureManager.elapsedSeconds))
+                    .font(.system(size: 48, weight: .light, design: .rounded))
+                    .foregroundStyle(isCamera ? .white : FactumTheme.primaryText)
+                
+                // Pomodoro phase indicator
+                if captureManager.timerMode == .pomodoro {
+                    Text(captureManager.isOnBreak ? "Break" : "Focus")
+                        .font(FactumTheme.font(16, weight: .medium))
+                        .foregroundStyle(captureManager.isOnBreak ? .green : (isCamera ? .white.opacity(0.6) : FactumTheme.secondaryText))
+                }
+                
+                // App leave counter on lock screen
+                if appLeaveCount > 0 {
+                    leaveCounter(isCamera: isCamera)
+                        .padding(.top, 8)
+                }
+                
+                Text("Hold to unlock")
+                    .font(FactumTheme.captionFont)
+                    .foregroundStyle(isCamera ? .white.opacity(0.4) : FactumTheme.tertiaryText)
+                    .padding(.top, 12)
+                
+                // Hold-to-unlock button with progress ring
+                ZStack {
+                    // Progress ring
+                    Circle()
+                        .stroke(isCamera ? .white.opacity(0.1) : FactumTheme.elevated, lineWidth: 3)
+                        .frame(width: 64, height: 64)
+                    
+                    Circle()
+                        .trim(from: 0, to: unlockProgress)
+                        .stroke(
+                            isCamera ? Color.white : FactumTheme.accent,
+                            style: StrokeStyle(lineWidth: 3, lineCap: .round)
+                        )
+                        .frame(width: 64, height: 64)
+                        .rotationEffect(.degrees(-90))
+                    
+                    Image(systemName: unlockProgress >= 1.0 ? "lock.open.fill" : "lock.fill")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(isCamera ? .white.opacity(0.7) : FactumTheme.secondaryText)
+                        .contentTransition(.symbolEffect(.replace))
+                }
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { _ in
+                            if holdStartDate == nil {
+                                holdStartDate = Date()
+                                Haptics.light()
+                                withAnimation(.linear(duration: 2.0)) {
+                                    unlockProgress = 1.0
+                                }
+                            }
+                        }
+                        .onEnded { _ in
+                            if let start = holdStartDate, Date().timeIntervalSince(start) >= 2.0 {
+                                // Held long enough — unlock
+                                Haptics.success()
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    lockMode = false
+                                }
+                                unlockProgress = 0
+                            } else {
+                                // Released early — reset
+                                withAnimation(.easeOut(duration: 0.3)) {
+                                    unlockProgress = 0
+                                }
+                            }
+                            holdStartDate = nil
+                        }
+                )
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { } // Eat all taps
+    }
+    
+    // MARK: - Leave Counter
+    
+    private func leaveCounter(isCamera: Bool) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "iphone.and.arrow.forward")
+                .font(.system(size: 12, weight: .semibold))
+            Text("Left app \(appLeaveCount) \(appLeaveCount == 1 ? "time" : "times")")
+                .font(FactumTheme.font(12, weight: .medium))
+        }
+        .foregroundStyle(isCamera ? .white.opacity(0.5) : FactumTheme.tertiaryText)
     }
     
     // MARK: - Paused Overlay
@@ -1688,6 +1933,7 @@ struct TimelapseCameraView: View {
                 
                 // Resume button
                 Button {
+                    Haptics.medium()
                     captureManager.resumeRecording()
                     scheduleDim()
                 } label: {
@@ -1706,6 +1952,7 @@ struct TimelapseCameraView: View {
                 
                 // End Session button
                 Button {
+                    Haptics.medium()
                     // Keep paused (don't stop) so Back can return to paused overlay
                     if phase == .timerRunning {
                         handleTimerEnd()
@@ -1721,6 +1968,7 @@ struct TimelapseCameraView: View {
                 
                 // Discard button
                 Button {
+                    Haptics.warning()
                     showDiscardConfirm = true
                 } label: {
                     Text("Discard")

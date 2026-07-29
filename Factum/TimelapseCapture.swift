@@ -544,6 +544,14 @@ final class TimelapseCaptureManager {
     var pomodoroCompletedCycles: Int = 0
     var pomodoroMaxCycles: Int = 0  // 0 means infinite
     var isOnBreak = false
+    /// Accumulated break seconds during this pomodoro session (excluded from stats).
+    private(set) var totalBreakSeconds: Int = 0
+    private var breakPhaseStartDate: Date?
+    
+    /// Study time only — excludes pomodoro break time.
+    var studySeconds: Int {
+        elapsedSeconds - totalBreakSeconds
+    }
     
     // MARK: Subject tracking
     var currentSubject: String = "General"
@@ -832,6 +840,8 @@ final class TimelapseCaptureManager {
         exportedVideoURL = nil
         thumbnailImage = nil
         isOnBreak = false
+        totalBreakSeconds = 0
+        breakPhaseStartDate = nil
         pomodoroCompletedCycles = 0
         pomodoroPhase = .study
         recordingStartDate = Date()
@@ -909,6 +919,8 @@ final class TimelapseCaptureManager {
         exportedVideoURL = nil
         thumbnailImage = nil
         isOnBreak = false
+        totalBreakSeconds = 0
+        breakPhaseStartDate = nil
         pomodoroCompletedCycles = 0
         pomodoroPhase = .study
         recordingStartDate = Date()
@@ -977,11 +989,17 @@ final class TimelapseCaptureManager {
                     pomodoroPhase = .shortBreak
                     pomodoroPhaseSecondsRemaining = pomodoroBreakMinutes * 60
                     isOnBreak = true
+                    breakPhaseStartDate = Date()
                     captureDelegate?.isOnBreak = true
                 } else {
                     pomodoroPhase = .study
                     pomodoroPhaseSecondsRemaining = pomodoroStudyMinutes * 60
                     isOnBreak = false
+                    // Accumulate the break that just ended
+                    if let breakStart = breakPhaseStartDate {
+                        totalBreakSeconds += Int(Date().timeIntervalSince(breakStart))
+                    }
+                    breakPhaseStartDate = nil
                     captureDelegate?.isOnBreak = false
                 }
             }
@@ -1004,6 +1022,12 @@ final class TimelapseCaptureManager {
             elapsedSeconds = elapsedBeforeCurrentStart
         }
         recordingStartDate = nil
+        
+        // Finalize any in-progress break so studySeconds is accurate
+        if let breakStart = breakPhaseStartDate {
+            totalBreakSeconds += Int(Date().timeIntervalSince(breakStart))
+            breakPhaseStartDate = nil
+        }
         
         isRecording = false
         isPaused = false
@@ -1213,11 +1237,17 @@ final class TimelapseCaptureManager {
         case .continuous:
             break
         case .pomodoro:
-            // Fast-forward through pomodoro phases
+            // Fast-forward through pomodoro phases, tracking break time
+            // Finalize any in-progress break before fast-forwarding
+            if let breakStart = breakPhaseStartDate {
+                totalBreakSeconds += Int(bgDate.timeIntervalSince(breakStart))
+                breakPhaseStartDate = nil
+            }
             var remaining = secondsInBackground
             while remaining > 0 {
                 if pomodoroPhaseSecondsRemaining <= remaining {
-                    remaining -= pomodoroPhaseSecondsRemaining
+                    let phaseTime = pomodoroPhaseSecondsRemaining
+                    remaining -= phaseTime
                     if pomodoroPhase == .study {
                         pomodoroCompletedCycles += 1
                         if pomodoroMaxCycles > 0 && pomodoroCompletedCycles >= pomodoroMaxCycles {
@@ -1229,12 +1259,19 @@ final class TimelapseCaptureManager {
                         isOnBreak = true
                         captureDelegate?.isOnBreak = true
                     } else {
+                        // A full break phase just completed — count it
+                        totalBreakSeconds += phaseTime
                         pomodoroPhase = .study
                         pomodoroPhaseSecondsRemaining = pomodoroStudyMinutes * 60
                         isOnBreak = false
                         captureDelegate?.isOnBreak = false
                     }
                 } else {
+                    // Partial phase — if we're in a break, track the partial break time
+                    if pomodoroPhase == .shortBreak {
+                        totalBreakSeconds += remaining
+                        breakPhaseStartDate = Date()
+                    }
                     pomodoroPhaseSecondsRemaining -= remaining
                     remaining = 0
                 }

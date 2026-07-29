@@ -90,26 +90,29 @@ struct FeedView: View {
     }
     
     private var emptyState: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 0) {
             Spacer()
-                .frame(height: 80)
+                .frame(height: 60)
             
-            FactumIcon(size: 80, color: FactumTheme.tertiaryText)
+            FactumIcon(size: 56, color: FactumTheme.tertiaryText)
+                .padding(.bottom, FactumTheme.spacing16)
             
-            Text("No study sessions yet")
-                .font(FactumTheme.headlineFont)
+            Text("Your feed is empty")
+                .font(FactumTheme.font(18, weight: .regular))
                 .foregroundStyle(FactumTheme.primaryText)
+                .padding(.bottom, FactumTheme.spacing4)
             
-            Text("Start a timelapse to record your\nfirst study session")
-                .font(FactumTheme.bodyFont)
-                .foregroundStyle(FactumTheme.secondaryText)
+            Text("Record a study session and it\nwill show up here.")
+                .font(FactumTheme.captionFont)
+                .foregroundStyle(FactumTheme.tertiaryText)
                 .multilineTextAlignment(.center)
+                .lineSpacing(3)
+                .padding(.bottom, FactumTheme.spacing24)
             
-            Button("Start Studying") {
+            Button("Record a Session") {
                 showingNewTimelapse = true
             }
             .buttonStyle(FactumButtonStyle())
-            .padding(.top, 8)
         }
     }
 }
@@ -224,6 +227,28 @@ struct TimelapseCardView: View {
                                             .frame(height: 14)
                                             .foregroundStyle(FactumTheme.tertiaryText)
                                     }
+                                    
+                                    if timelapse.appLeaveCount > 0 {
+                                        Rectangle()
+                                            .fill(FactumTheme.separator)
+                                            .frame(width: 1, height: 44)
+                                        
+                                        // App leaves
+                                        VStack(spacing: 6) {
+                                            Image(systemName: "iphone.and.arrow.forward")
+                                                .font(.system(size: 20))
+                                                .frame(height: 22)
+                                                .foregroundStyle(.red.opacity(0.7))
+                                            Text("\(timelapse.appLeaveCount)")
+                                                .font(FactumTheme.font(16, weight: .bold))
+                                                .frame(height: 20)
+                                                .foregroundStyle(FactumTheme.primaryText)
+                                            Text("Left App")
+                                                .font(FactumTheme.smallFont)
+                                                .frame(height: 14)
+                                                .foregroundStyle(FactumTheme.tertiaryText)
+                                        }
+                                    }
                                 }
                                 .padding(.top, 16)
                             }
@@ -249,6 +274,7 @@ struct TimelapseCardView: View {
                             // Subject tag — tappable if multi-subject
                             if timelapse.hasMultipleSubjects {
                                 Button {
+                                    Haptics.light()
                                     withAnimation(.easeInOut(duration: 0.2)) {
                                         showSubjectBreakdown.toggle()
                                     }
@@ -278,6 +304,7 @@ struct TimelapseCardView: View {
                             if isOwnPost {
                                 Menu {
                                     Button(role: .destructive) {
+                                        Haptics.warning()
                                         showDeleteConfirm = true
                                     } label: {
                                         Label("Delete", systemImage: "trash")
@@ -365,23 +392,26 @@ struct TimelapseCardView: View {
                     cardPlayer = nil
                 }
             
-            // Caption, description, and actions — flush against the video
-            VStack(alignment: .leading, spacing: 6) {
+            // Caption and description
+            VStack(alignment: .leading, spacing: 4) {
                 Text(timelapse.caption)
-                    .font(FactumTheme.subheadlineFont)
+                    .font(FactumTheme.font(16, weight: .regular))
                     .foregroundStyle(FactumTheme.primaryText)
                 
-                Text(timelapse.studyDescription)
-                    .font(FactumTheme.bodyFont)
-                    .foregroundStyle(FactumTheme.secondaryText)
-                    .lineLimit(2)
+                if !timelapse.studyDescription.isEmpty {
+                    Text(timelapse.studyDescription)
+                        .font(FactumTheme.captionFont)
+                        .foregroundStyle(FactumTheme.tertiaryText)
+                        .lineLimit(2)
+                }
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, FactumTheme.spacing12)
             .padding(.top, 10)
             
-            // Action bar
+            // Action bar — lighter weight, secondary
             HStack(spacing: 24) {
                 Button {
+                    Haptics.light()
                     let uid = AuthService.shared.currentUserID
                     guard !uid.isEmpty else { return }
                     withAnimation(.spring(response: 0.3)) {
@@ -408,6 +438,7 @@ struct TimelapseCardView: View {
                 }
                 
                 Button {
+                    Haptics.light()
                     showDetail = true
                 } label: {
                     HStack(spacing: 6) {
@@ -421,11 +452,12 @@ struct TimelapseCardView: View {
                 
                 Spacer()
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .padding(.horizontal, FactumTheme.spacing12)
+            .padding(.vertical, FactumTheme.spacing12)
         }
         .background(FactumTheme.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
+        .shadow(color: FactumTheme.cardShadow, radius: FactumTheme.cardShadowRadius, x: 0, y: FactumTheme.cardShadowY)
         .contentShape(Rectangle())
         .onTapGesture {
             showDetail = true
@@ -445,10 +477,18 @@ struct TimelapseCardView: View {
             let uid = AuthService.shared.currentUserID
             isLiked = timelapse.likedByUIDs.contains(uid)
             if cachedThumbnail == nil, let data = timelapse.thumbnailData {
-                cachedThumbnail = UIImage(data: data)
+                let thumbData = data
+                Task.detached {
+                    let image = UIImage(data: thumbData)
+                    await MainActor.run { cachedThumbnail = image }
+                }
             }
             if cachedAfterPhoto == nil, let data = timelapse.afterPhotoData {
-                cachedAfterPhoto = UIImage(data: data)
+                let afterData = data
+                Task.detached {
+                    let image = UIImage(data: afterData)
+                    await MainActor.run { cachedAfterPhoto = image }
+                }
             }
         }
     }
@@ -605,6 +645,27 @@ struct TimelapseDetailView: View {
                                                 .frame(height: 14)
                                                 .foregroundStyle(FactumTheme.tertiaryText)
                                         }
+                                        
+                                        if timelapse.appLeaveCount > 0 {
+                                            Rectangle()
+                                                .fill(FactumTheme.separator)
+                                                .frame(width: 1, height: 44)
+                                            
+                                            VStack(spacing: 6) {
+                                                Image(systemName: "iphone.and.arrow.forward")
+                                                    .font(.system(size: 20))
+                                                    .frame(height: 22)
+                                                    .foregroundStyle(.red.opacity(0.7))
+                                                Text("\(timelapse.appLeaveCount)")
+                                                    .font(FactumTheme.font(16, weight: .bold))
+                                                    .frame(height: 20)
+                                                    .foregroundStyle(FactumTheme.primaryText)
+                                                Text("Left App")
+                                                    .font(FactumTheme.smallFont)
+                                                    .frame(height: 14)
+                                                    .foregroundStyle(FactumTheme.tertiaryText)
+                                            }
+                                        }
                                     }
                                     .padding(.top, 16)
                                 )
@@ -675,6 +736,7 @@ struct TimelapseDetailView: View {
                     // Like button
                     HStack(spacing: 20) {
                         Button {
+                            Haptics.light()
                             let uid = AuthService.shared.currentUserID
                             guard !uid.isEmpty else { return }
                             withAnimation(.spring(response: 0.3)) {
@@ -742,6 +804,7 @@ struct TimelapseDetailView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                         
                         Button {
+                            Haptics.light()
                             guard !newComment.trimmingCharacters(in: .whitespaces).isEmpty else { return }
                             let comment = TimelapseComment(
                                 timelapseID: timelapse.id,
@@ -784,10 +847,18 @@ struct TimelapseDetailView: View {
                 let uid = AuthService.shared.currentUserID
                 isLiked = timelapse.likedByUIDs.contains(uid)
                 if cachedThumbnail == nil, let data = timelapse.thumbnailData {
-                    cachedThumbnail = UIImage(data: data)
+                    let thumbData = data
+                    Task.detached {
+                        let image = UIImage(data: thumbData)
+                        await MainActor.run { cachedThumbnail = image }
+                    }
                 }
                 if cachedAfterPhoto == nil, let data = timelapse.afterPhotoData {
-                    cachedAfterPhoto = UIImage(data: data)
+                    let afterData = data
+                    Task.detached {
+                        let image = UIImage(data: afterData)
+                        await MainActor.run { cachedAfterPhoto = image }
+                    }
                 }
                 
                 if let url = timelapse.videoURL {

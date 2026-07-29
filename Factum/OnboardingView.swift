@@ -224,6 +224,7 @@ struct OnboardingView: View {
                 // Sign In / Sign Up toggle
                 HStack(spacing: 0) {
                     Button {
+                        Haptics.selection()
                         withAnimation(.easeInOut(duration: 0.25)) {
                             isSignUpMode = false
                             signInError = nil
@@ -239,6 +240,7 @@ struct OnboardingView: View {
                     }
                     
                     Button {
+                        Haptics.selection()
                         withAnimation(.easeInOut(duration: 0.25)) {
                             isSignUpMode = true
                             signInError = nil
@@ -320,6 +322,7 @@ struct OnboardingView: View {
                 // Primary action button
                 if isSignUpMode {
                     Button {
+                        Haptics.medium()
                         focusedField = nil
                         Task { await handleEmailSignUp() }
                     } label: {
@@ -341,6 +344,7 @@ struct OnboardingView: View {
                     .padding(.horizontal, 24)
                 } else {
                     Button {
+                        Haptics.medium()
                         focusedField = nil
                         Task { await handleEmailSignIn() }
                     } label: {
@@ -385,6 +389,7 @@ struct OnboardingView: View {
                 
                 // Google button
                 Button {
+                    Haptics.medium()
                     focusedField = nil
                     if isSignUpMode {
                         Task { await handleGoogleSignUp() }
