@@ -44,6 +44,12 @@ final class StudySubject {
         ("Literature", "#FF9500"),
         ("Physics", "#5AC8FA"),
         ("Chemistry", "#A8CC3C"),
+        ("Economics", "#FF2D55"),
+        ("Psychology", "#BF5AF2"),
+        ("Biology", "#00C7BE"),
+        ("Spanish", "#FFCC00"),
+        ("Art", "#64D2FF"),
+        ("Geography", "#8E8E93"),
     ]
     
     // MARK: - Seeding

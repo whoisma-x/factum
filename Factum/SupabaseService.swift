@@ -55,6 +55,8 @@ struct TimelapseRow: Codable {
     var commentCount: Int
     var videoDownloadUrl: String?
     var thumbnailDownloadUrl: String?
+    var appLeaveCount: Int?
+    var subjectSegmentsJson: String?
     
     enum CodingKeys: String, CodingKey {
         case id
@@ -72,6 +74,8 @@ struct TimelapseRow: Codable {
         case commentCount = "comment_count"
         case videoDownloadUrl = "video_download_url"
         case thumbnailDownloadUrl = "thumbnail_download_url"
+        case appLeaveCount = "app_leave_count"
+        case subjectSegmentsJson = "subject_segments_json"
     }
 }
 
@@ -212,7 +216,9 @@ final class SupabaseService {
             likedByUids: timelapse.likedByUIDs,
             commentCount: timelapse.commentCount,
             videoDownloadUrl: timelapse.videoDownloadURL,
-            thumbnailDownloadUrl: timelapse.thumbnailDownloadURL
+            thumbnailDownloadUrl: timelapse.thumbnailDownloadURL,
+            appLeaveCount: timelapse.appLeaveCount,
+            subjectSegmentsJson: timelapse.subjectSegmentsJSON
         )
         
         try await supabase.from("timelapses").upsert(row).execute()
@@ -408,6 +414,8 @@ final class SupabaseService {
     }
     
     /// Sync study subjects from Supabase into SwiftData.
+    /// Performs a full replacement: local subjects are replaced by the cloud set
+    /// so switching accounts always shows the correct subjects.
     /// Returns `true` if Supabase had subjects, `false` if not.
     @MainActor
     @discardableResult
@@ -425,22 +433,20 @@ final class SupabaseService {
             let descriptor = FetchDescriptor<StudySubject>()
             let localSubjects = (try? context.fetch(descriptor)) ?? []
             
-            // Build a set of cloud subject names (lowercased) for dedup
-            let cloudNameSet = Set(subjectDicts.compactMap { $0["name"]?.lowercased() })
+            // Build lookup of cloud subjects by ID
             let cloudIDSet = Set(subjectDicts.compactMap { $0["id"] })
             
-            // Remove local duplicates
-            var removedDuplicates = 0
+            // Remove ALL local subjects that aren't in the cloud set.
+            // This ensures switching accounts doesn't leave stale subjects behind.
+            var removedCount = 0
             for local in localSubjects {
-                let localIDString = local.id.uuidString
-                let localNameLower = local.name.lowercased()
-                if cloudNameSet.contains(localNameLower) && !cloudIDSet.contains(localIDString) {
+                if !cloudIDSet.contains(local.id.uuidString) {
                     context.delete(local)
-                    removedDuplicates += 1
+                    removedCount += 1
                 }
             }
-            if removedDuplicates > 0 {
-                print("[SYNC] Removed \(removedDuplicates) duplicate local subjects")
+            if removedCount > 0 {
+                print("[SYNC] Removed \(removedCount) local subjects not in cloud")
             }
             
             // Re-fetch after deletions
@@ -533,6 +539,13 @@ final class SupabaseService {
                         existing.videoDownloadURL = row.videoDownloadUrl
                         existing.thumbnailDownloadURL = row.thumbnailDownloadUrl
                         existing.authorAvatarURL = row.authorAvatarUrl
+                        // Sync app leaves and subject segments from cloud if local has defaults
+                        if let cloudLeaves = row.appLeaveCount, existing.appLeaveCount == 0, cloudLeaves > 0 {
+                            existing.appLeaveCount = cloudLeaves
+                        }
+                        if let cloudSegments = row.subjectSegmentsJson, existing.subjectSegmentsJSON == nil {
+                            existing.subjectSegmentsJSON = cloudSegments
+                        }
                         // Queue thumbnail download if missing locally
                         if existing.thumbnailData == nil,
                            let thumbURL = row.thumbnailDownloadUrl,
@@ -559,6 +572,8 @@ final class SupabaseService {
                     timelapse.commentCount = row.commentCount
                     timelapse.videoDownloadURL = row.videoDownloadUrl
                     timelapse.thumbnailDownloadURL = row.thumbnailDownloadUrl
+                    timelapse.appLeaveCount = row.appLeaveCount ?? 0
+                    timelapse.subjectSegmentsJSON = row.subjectSegmentsJson
                     // Queue thumbnail download
                     if let thumbURL = row.thumbnailDownloadUrl,
                        let thumbRemoteURL = URL(string: thumbURL) {

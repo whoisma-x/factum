@@ -10,6 +10,7 @@ import SwiftData
 import GoogleSignIn
 import Supabase
 import SQLite3
+import AVFoundation
 
 @main
 struct FactumApp: App {
@@ -17,6 +18,11 @@ struct FactumApp: App {
     @State private var deepLinkTimelapseID: String?
     
     init() {
+        // Allow background music to keep playing during video playback.
+        // The app only shows muted timelapse videos, so .ambient is correct.
+        try? AVAudioSession.sharedInstance().setCategory(.ambient)
+        try? AVAudioSession.sharedInstance().setActive(true)
+
         // Detect fresh install: UserDefaults is wiped on delete, but Keychain
         // may retain tokens. If our flag is missing, this is a new install —
         // clear any stale session so the user sees onboarding again.

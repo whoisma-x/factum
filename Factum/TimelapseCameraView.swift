@@ -10,6 +10,7 @@ import SwiftUI
 import SwiftData
 import AVFoundation
 import CallKit
+import UserNotifications
 
 // MARK: - Camera Phase
 
@@ -45,11 +46,12 @@ struct TimelapseCameraView: View {
     @State private var customMinutes = 0
 
     // Screen dimming during recording
+    @AppStorage("autoDimScreen") private var autoDimEnabled = false
     @State private var isDimmed = false
     @State private var dimTimer: Timer?
     @State private var brightnessTimer: Timer?
     @State private var savedBrightness: CGFloat = UIScreen.main.brightness
-    private let dimDelay: TimeInterval = 15.0
+    private let dimDelay: TimeInterval = 8.0
     
     // Photo timer mode
     @State private var isTakingPhoto = false
@@ -84,10 +86,6 @@ struct TimelapseCameraView: View {
         colorScheme == .dark ? Color.black.opacity(0.4) : Color.white.opacity(0.25)
     }
     
-    /// Adaptive foreground for non-selected zoom buttons
-    private var cameraOverlayBtnBg: Color {
-        colorScheme == .dark ? Color.white.opacity(0.15) : Color.white.opacity(0.3)
-    }
     
     private var showsCameraPreview: Bool {
         phase == .cameraSetup || phase == .recording || phase == .photoCapture || phase == .photoAfter
@@ -110,7 +108,11 @@ struct TimelapseCameraView: View {
                     .zIndex(200)
                 }
             }
-                .task { await setupCamera() }
+                .task {
+                    await setupCamera()
+                    // Request notification permission for study reminders
+                    try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
+                }
                 .onDisappear { handleDisappear() }
                 .onChange(of: phase) { _, newPhase in handlePhaseChange(newPhase) }
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in handleResignActive() }
@@ -144,6 +146,11 @@ struct TimelapseCameraView: View {
     
     private func handlePhaseChange(_ newPhase: CameraPhase) {
         UIApplication.shared.isIdleTimerDisabled = (newPhase == .recording || newPhase == .timerRunning || newPhase == .photoConfirm)
+        // Restore brightness immediately when leaving recording/timer phases
+        if newPhase != .recording && newPhase != .timerRunning {
+            cancelDimTimer()
+            restoreBrightness()
+        }
     }
     
     private func handleResignActive() {
@@ -163,8 +170,24 @@ struct TimelapseCameraView: View {
                 }
             } else {
                 captureManager.handleEnterBackground()
+                // Send a notification reminding the user to come back
+                if !wasPhoneCall {
+                    sendStudyReminder()
+                }
             }
         }
+    }
+    
+    private func sendStudyReminder() {
+        let content = UNMutableNotificationContent()
+        content.title = "Get back to studying!"
+        content.body = "You left your \(captureManager.currentSubject) session. You've left \(appLeaveCount + 1) time\(appLeaveCount == 0 ? "" : "s") now."
+        content.sound = .default
+        
+        // Fire after 3 seconds so it appears while they're in the other app
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 3, repeats: false)
+        let request = UNNotificationRequest(identifier: "study_reminder", content: content, trigger: trigger)
+        UNUserNotificationCenter.current().add(request)
     }
     
     private func handleBecomeActive() {
@@ -222,7 +245,12 @@ struct TimelapseCameraView: View {
             FactumTheme.background.ignoresSafeArea()
             
             if showsCameraPreview {
-                CameraPreviewView(session: captureManager.captureSession)
+                CameraPreviewView(session: captureManager.captureSession,
+                                  onDoubleTap: {
+                    Haptics.light()
+                    captureManager.flipCamera()
+                    zoomAtGestureStart = captureManager.currentZoomFactor
+                })
                     .ignoresSafeArea()
             }
             
@@ -384,7 +412,7 @@ struct TimelapseCameraView: View {
                 }
                 .padding(.horizontal, 24)
                 
-                Text("Choose Timer")
+                Text(captureManager.recordingMode == .timelapse ? "Choose Timelapse" : "Choose Timer")
                     .font(FactumTheme.titleFont)
                     .foregroundStyle(FactumTheme.primaryText)
                 
@@ -745,8 +773,8 @@ struct TimelapseCameraView: View {
     // MARK: - Camera Setup Overlay
     
     private var cameraSetupOverlay: some View {
-        VStack {
-            // Top bar
+        VStack(spacing: 0) {
+            // Top bar — minimal, dark chrome
             HStack {
                 Button {
                     withAnimation(.easeInOut(duration: 0.3)) {
@@ -754,119 +782,107 @@ struct TimelapseCameraView: View {
                     }
                 } label: {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 18, weight: .semibold))
+                        .font(.system(size: 20, weight: .semibold))
                         .foregroundStyle(.white)
-                        .padding(12)
-                        .background(cameraOverlayBg)
-                        .clipShape(Circle())
+                        .frame(width: 44, height: 44)
                 }
                 
                 Spacer()
                 
-                Text("Position Camera")
-                    .font(FactumTheme.subheadlineFont)
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(cameraOverlayBg)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                
                 Spacer()
                 
-                // Flip camera
-                Button {
-                    Haptics.light()
-                    captureManager.flipCamera()
-                    zoomAtGestureStart = captureManager.currentZoomFactor
-                } label: {
-                    Image(systemName: "camera.rotate")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .padding(12)
-                        .background(cameraOverlayBg)
-                        .clipShape(Circle())
-                }
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 16)
-            
-            Spacer()
-            
-            // Hint text + orientation indicator
-            VStack(spacing: 12) {
-                Image(systemName: "viewfinder")
-                    .font(.system(size: 32))
-                    .foregroundStyle(.white.opacity(0.5))
-                Text("Double-tap to flip camera")
-                    .font(FactumTheme.captionFont)
-                    .foregroundStyle(.white.opacity(0.5))
-                    .multilineTextAlignment(.center)
-
-                // Auto-detected orientation indicator
+                // Orientation indicator — subtle
                 orientationIndicator
             }
+            .padding(.horizontal, 16)
+            .padding(.top, 4)
             
             Spacer()
             
-            // Bottom controls
-            VStack(spacing: 16) {
-                // Zoom control
-                zoomControl
+            // Bottom chrome — Apple Camera style
+            VStack(spacing: 20) {
+                // Zoom level buttons
+                zoomButtons
                 
-                // Timer mode summary
+                // Timer mode summary pill
                 timerModeSummary
                 
-                // Start recording button
-                Button {
-                    Haptics.medium()
-                    savedBrightness = UIScreen.main.brightness
-                    // Flash feedback
-                    showRecordFlash = true
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        showRecordFlash = false
+                // Record button row — centered big red circle
+                HStack {
+                    // Empty spacer for balance
+                    Color.clear.frame(width: 44, height: 44)
+                    
+                    Spacer()
+                    
+                    // Record button — Apple Camera style
+                    Button {
+                        Haptics.medium()
+                        savedBrightness = UIScreen.main.brightness
+                        showRecordFlash = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            showRecordFlash = false
+                        }
+                        captureManager.startRecording()
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            phase = .recording
+                        }
+                        scheduleDim()
+                    } label: {
+                        ZStack {
+                            Circle()
+                                .strokeBorder(.white, lineWidth: 4)
+                                .frame(width: 72, height: 72)
+                            Circle()
+                                .fill(.red)
+                                .frame(width: 60, height: 60)
+                        }
                     }
-                    captureManager.startRecording()
-                    withAnimation(.easeInOut(duration: 0.3)) {
-                        phase = .recording
+                    
+                    Spacer()
+                    
+                    // Flip camera (secondary position)
+                    Button {
+                        Haptics.light()
+                        captureManager.flipCamera()
+                        zoomAtGestureStart = captureManager.currentZoomFactor
+                    } label: {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.system(size: 22))
+                            .foregroundStyle(.white)
+                            .frame(width: 44, height: 44)
                     }
-                    scheduleDim()
-                } label: {
-                    Text("Start Recording")
-                        .font(FactumTheme.font(18, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 18)
-                        .background(Color.red)
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
                 }
                 .padding(.horizontal, 24)
-                .padding(.bottom, 50)
             }
-        }
-        .contentShape(Rectangle())
-        .onTapGesture(count: 2) {
-            Haptics.light()
-            captureManager.flipCamera()
-            zoomAtGestureStart = captureManager.currentZoomFactor
+            .padding(.bottom, 40)
+            .padding(.top, 16)
+            .background(
+                LinearGradient(
+                    colors: [.clear, .black.opacity(0.6)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .ignoresSafeArea(edges: .bottom)
+            )
         }
     }
     
     // MARK: - Timer Mode Summary
     
     private var timerModeSummary: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             Image(systemName: captureManager.timerMode.icon)
-                .font(.system(size: 14))
-                .foregroundStyle(.white)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.9))
             
             Text(timerSummaryText)
-                .font(FactumTheme.captionFont)
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.white.opacity(0.7))
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(cameraOverlayBg)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.white.opacity(0.15))
+        .clipShape(Capsule())
     }
     
     private var timerSummaryText: String {
@@ -891,93 +907,117 @@ struct TimelapseCameraView: View {
     private var recordingOverlay: some View {
         ZStack {
             // Main recording UI
-            VStack {
-                // Top bar
-                HStack {
-                    if !lockMode {
-                        Button {
-                            Haptics.light()
-                            cancelDimTimer()
-                            restoreBrightness()
-                            captureManager.pauseRecording()
-                        } label: {
-                            Image(systemName: "pause.fill")
-                                .font(.system(size: 18, weight: .semibold))
-                                .foregroundStyle(.white)
-                                .padding(12)
-                                .background(.black.opacity(0.4))
-                                .clipShape(Circle())
-                        }
-                    }
-                    
-                    Spacer()
-                    
-                    // Flip camera
-                    Button {
-                        Haptics.light()
-                        captureManager.flipCamera()
-                        zoomAtGestureStart = captureManager.currentZoomFactor
-                    } label: {
-                        Image(systemName: "camera.rotate")
-                            .font(.system(size: 18, weight: .semibold))
+            VStack(spacing: 0) {
+                Spacer()
+                
+                // Centre area — recording indicator + timer + subject
+                VStack(spacing: 8) {
+                    // Recording indicator pill (red dot + time)
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(.red)
+                            .frame(width: 8, height: 8)
+                        Text(formatTime(captureManager.elapsedSeconds))
+                            .font(.system(size: 15, weight: .semibold, design: .monospaced))
                             .foregroundStyle(.white)
-                            .padding(12)
-                            .background(.black.opacity(0.4))
-                            .clipShape(Circle())
+                            .monospacedDigit()
                     }
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, 16)
-                
-                Spacer()
-                
-                // Timer display
-                timerDisplay
-                
-                // Subject pill — tap to switch
-                if !lockMode {
-                    subjectPill(isCamera: true)
-                        .padding(.top, 8)
-                }
-                
-                // Lock toggle — below the timer
-                lockButton
-                    .padding(.top, 12)
-                
-                // App leave counter
-                if appLeaveCount > 0 {
-                    leaveCounter(isCamera: true)
-                        .padding(.top, 8)
-                }
-                
-                Spacer()
-                
-                // Bottom controls
-                VStack(spacing: 16) {
-                    // Zoom control
-                    zoomControl
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(.red.opacity(0.8))
+                    .clipShape(Capsule())
                     
-                    // Stop button
-                    Button {
-                        Haptics.medium()
-                        cancelDimTimer()
-                        restoreBrightness()
-                        captureManager.stopRecording()
-                        exportAndProceed()
-                    } label: {
-                        ZStack {
-                            Circle()
-                                .strokeBorder(.white, lineWidth: 4)
-                                .frame(width: 80, height: 80)
-                            
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(.red)
-                                .frame(width: 32, height: 32)
-                        }
+                    // Mode-specific info (pomodoro phase, countdown, etc.)
+                    recordingModeInfo
+                    
+                    // Subject pill — always visible, tappable only when unlocked
+                    subjectPill(isCamera: true)
+                        .padding(.top, 2)
+                        .allowsHitTesting(!lockMode)
+                        .opacity(lockMode ? 0.6 : 1.0)
+                    
+                    // App leave counter as small badge
+                    if appLeaveCount > 0 {
+                        leaveCounter(isCamera: true)
                     }
-                    .disabled(captureManager.isExporting)
-                    .padding(.bottom, 40)
                 }
+                
+                Spacer()
+                
+                // Bottom chrome
+                VStack(spacing: 16) {
+                    if lockMode {
+                        // Locked: hold-to-unlock control
+                        holdToUnlockControl(isCamera: true)
+                    } else {
+                        // Zoom level buttons
+                        zoomButtons
+                        
+                        // Lock button — small, above controls
+                        lockButton
+                        
+                        // Control row — pause, stop, flip
+                        HStack {
+                            Button {
+                                Haptics.light()
+                                cancelDimTimer()
+                                restoreBrightness()
+                                captureManager.pauseRecording()
+                            } label: {
+                                Image(systemName: "pause.fill")
+                                    .font(.system(size: 20))
+                                    .foregroundStyle(.white)
+                                    .frame(width: 44, height: 44)
+                            }
+                            
+                            Spacer()
+                            
+                            // Stop button — Apple Camera style (square in circle)
+                            Button {
+                                Haptics.medium()
+                                cancelDimTimer()
+                                restoreBrightness()
+                                captureManager.stopRecording()
+                                exportAndProceed()
+                            } label: {
+                                ZStack {
+                                    Circle()
+                                        .strokeBorder(.white, lineWidth: 4)
+                                        .frame(width: 72, height: 72)
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(.red)
+                                        .frame(width: 30, height: 30)
+                                }
+                            }
+                            .disabled(captureManager.isExporting)
+                            
+                            Spacer()
+                            
+                            // Flip camera (right)
+                            Button {
+                                Haptics.light()
+                                captureManager.flipCamera()
+                                zoomAtGestureStart = captureManager.currentZoomFactor
+                            } label: {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                                    .font(.system(size: 20))
+                                    .foregroundStyle(.white)
+                                    .frame(width: 44, height: 44)
+                            }
+                        }
+                        .padding(.horizontal, 32)
+                    }
+                }
+                .padding(.bottom, 40)
+                .padding(.top, 12)
+                .background(
+                    LinearGradient(
+                        colors: [.clear, .black.opacity(0.5)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .ignoresSafeArea(edges: .bottom)
+                )
             }
             .opacity(captureManager.isExporting ? 0.3 : 1.0)
             .allowsHitTesting(!captureManager.isExporting)
@@ -986,10 +1026,62 @@ struct TimelapseCameraView: View {
             if captureManager.isPaused {
                 pausedOverlay(isCamera: true)
             }
+        }
+    }
+    
+    // MARK: - Recording Mode Info (compact, shown below red pill)
+    
+    @ViewBuilder
+    private var recordingModeInfo: some View {
+        switch captureManager.timerMode {
+        case .continuous:
+            EmptyView()
             
-            // Screen lock overlay (covers everything when lock mode is active)
-            if lockMode && !captureManager.isPaused {
-                screenLockOverlay(isCamera: true)
+        case .pomodoro:
+            VStack(spacing: 4) {
+                // Phase + remaining time
+                HStack(spacing: 8) {
+                    Text(captureManager.pomodoroPhase.rawValue.uppercased())
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(captureManager.isOnBreak ? .green : .white.opacity(0.8))
+                        .tracking(1.5)
+                    
+                    Text(formatTime(captureManager.pomodoroPhaseSecondsRemaining))
+                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(captureManager.isOnBreak ? .green : .white.opacity(0.7))
+                        .monospacedDigit()
+                }
+                
+                // Cycle count
+                Text(
+                    captureManager.pomodoroMaxCycles > 0
+                        ? "\(captureManager.pomodoroCompletedCycles)/\(captureManager.pomodoroMaxCycles) cycles"
+                        : "\(captureManager.pomodoroCompletedCycles) cycles"
+                )
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.white.opacity(0.4))
+                
+                if captureManager.isOnBreak {
+                    Text("Break time")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.green.opacity(0.8))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 3)
+                        .background(.green.opacity(0.15))
+                        .clipShape(Capsule())
+                }
+            }
+            
+        case .setTime:
+            VStack(spacing: 4) {
+                Text(formatTime(captureManager.countdownSecondsRemaining))
+                    .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(captureManager.countdownSecondsRemaining < 60 ? .orange : .white.opacity(0.7))
+                    .monospacedDigit()
+                
+                Text("remaining")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.4))
             }
         }
     }
@@ -1113,79 +1205,129 @@ struct TimelapseCameraView: View {
         }
     }
     
-    // MARK: - Zoom Control
+    // MARK: - Zoom Buttons (Apple Camera style)
     
-    private var zoomControl: some View {
-        HStack(spacing: 10) {
-            // Only include 0.5x if the device actually has an ultra-wide lens
-            let allLevels: [(String, CGFloat)] = [
-                ("0.5×", 0.5),
-                ("1×", 1.0),
-                ("2×", 2.0),
-                ("5×", 5.0)
-            ]
-            let zoomLevels = allLevels.filter { _, factor in
-                if factor < 1.0 { return captureManager.hasUltraWide }
-                return factor <= captureManager.maxZoomFactor
-            }
-            
-            ForEach(zoomLevels, id: \.0) { label, factor in
-                let isAvailable = factor >= captureManager.minZoomFactor && factor <= captureManager.maxZoomFactor
-                let isClosest = closestZoomLevel(from: zoomLevels) == factor
+    /// Zoom level buttons derived from the device's actual lens configuration.
+    /// Shows buttons like [.5] [1] [3] matching Apple Camera exactly.
+    private var zoomButtons: some View {
+        let levels = availableZoomLevels
+        let closest = closestZoomLevel(from: levels)
+        
+        return HStack(spacing: 2) {
+            ForEach(levels, id: \.label) { level in
+                let isSelected = level.deviceFactor == closest
+                let isIntermediate = isSelected
+                    && abs(captureManager.currentZoomFactor - level.deviceFactor) > 0.05
+                let displayText = isIntermediate
+                    ? formatZoomLabel(displayZoomValue)
+                    : level.label
+                let size: CGFloat = isSelected ? 33 : 28
                 
-                Button {
-                    captureManager.setZoom(factor, animated: true)
-                    zoomAtGestureStart = factor
-                } label: {
-                    Text(isClosest && abs(captureManager.currentZoomFactor - factor) > 0.05
-                         ? formatZoomLabel(captureManager.currentZoomFactor)
-                         : label)
-                        .font(FactumTheme.font(12, weight: isClosest ? .bold : .medium))
-                        .foregroundStyle(isClosest ? .black : .white.opacity(isAvailable ? 0.8 : 0.3))
-                        .frame(width: 44, height: 44)
-                        .background(isClosest ? .yellow : cameraOverlayBtnBg)
-                        .clipShape(Circle())
-                }
-                .disabled(!isAvailable)
+                Text(displayText)
+                    .font(.system(size: isSelected ? 12 : 10,
+                                  weight: .semibold, design: .rounded))
+                    .foregroundStyle(isSelected
+                        ? Color(red: 1.0, green: 0.84, blue: 0.04)
+                        : .white.opacity(0.6))
+                    .frame(width: size, height: size)
+                    .background(.black.opacity(isSelected ? 0.55 : 0.4))
+                    .clipShape(Circle())
+                    .onTapGesture {
+                        withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                            captureManager.setZoom(level.deviceFactor, animated: true)
+                            zoomAtGestureStart = level.deviceFactor
+                        }
+                    }
+                    .animation(.spring(response: 0.25, dampingFraction: 0.8),
+                               value: isSelected)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(cameraOverlayBg)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
     
-    /// Finds which zoom level button is closest to the current zoom factor
-    private func closestZoomLevel(from levels: [(String, CGFloat)]) -> CGFloat {
+    /// Zoom levels derived from the device's actual lens configuration,
+    /// using Apple's `displayVideoZoomFactorMultiplier` for correct labels
+    /// on every phone model (e.g. iPhone 15 Pro shows .5/1/3, 
+    /// iPhone 15 Pro Max shows .5/1/5).
+    private var availableZoomLevels: [(label: String, deviceFactor: CGFloat)] {
+        let m = captureManager.displayZoomMultiplier
+        var levels: [(label: String, deviceFactor: CGFloat)] = []
+        
+        // Ultra-wide — at device minimum zoom
+        if captureManager.hasUltraWide {
+            let displayVal = captureManager.minZoomFactor * m
+            let label = formatZoomButton(displayVal)
+            levels.append((label, captureManager.minZoomFactor))
+        }
+        
+        // Wide-angle — at the first switch-over point
+        let w = captureManager.wideAngleZoomFactor
+        let wideDisplay = w * m
+        levels.append((formatZoomButton(wideDisplay), w))
+        
+        // Additional lenses from remaining switch-over factors
+        let switchOvers = captureManager.switchOverFactors
+        for i in switchOvers.indices where i >= 1 {
+            let deviceFactor = switchOvers[i]
+            let displayVal = deviceFactor * m
+            levels.append((formatZoomButton(displayVal), deviceFactor))
+        }
+        
+        return levels
+    }
+    
+    /// Current zoom as Apple-style display value using the device's multiplier.
+    private var displayZoomValue: CGFloat {
+        captureManager.currentZoomFactor * captureManager.displayZoomMultiplier
+    }
+    
+    /// Format a display zoom value for a button label.
+    /// Apple Camera style: 0.5 → ".5", 1.0 → "1", 3.0 → "3", 2.5 → "2.5"
+    private func formatZoomButton(_ displayValue: CGFloat) -> String {
+        let val = (displayValue * 10).rounded() / 10 // round to 1 decimal
+        let isWhole = abs(val - val.rounded()) < 0.05
+        if isWhole {
+            let intVal = Int(val.rounded())
+            if intVal == 0 { return ".5" }
+            return "\(intVal)"
+        }
+        // Fractional — format with 1 decimal, drop leading zero if < 1
+        let str = String(format: "%.1f", val)
+        if val < 1.0 && str.hasPrefix("0") {
+            return String(str.dropFirst()) // "0.5" → ".5"
+        }
+        return str
+    }
+    
+    /// Finds which zoom level button is closest to the current device zoom factor.
+    private func closestZoomLevel(
+        from levels: [(label: String, deviceFactor: CGFloat)]
+    ) -> CGFloat {
         let current = captureManager.currentZoomFactor
         return levels.min(by: {
-            abs(log2($0.1) - log2(current)) < abs(log2($1.1) - log2(current))
-        })?.1 ?? 1.0
+            abs(log2($0.deviceFactor) - log2(current))
+                < abs(log2($1.deviceFactor) - log2(current))
+        })?.deviceFactor ?? 1.0
     }
     
-    /// Format zoom label like "1.5×" for intermediate values
-    private func formatZoomLabel(_ factor: CGFloat) -> String {
-        if abs(factor - factor.rounded()) < 0.05 {
-            return "\(Int(factor.rounded()))×"
+    /// Format zoom label like "1.5×" for intermediate display values.
+    private func formatZoomLabel(_ displayFactor: CGFloat) -> String {
+        if abs(displayFactor - displayFactor.rounded()) < 0.05 {
+            return "\(Int(displayFactor.rounded()))×"
         }
-        return String(format: "%.1f×", factor)
+        return String(format: "%.1f×", displayFactor)
     }
     
     // MARK: - Orientation Indicator
 
     /// Passive indicator showing the auto-detected device orientation.
     private var orientationIndicator: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 4) {
             Image(systemName: captureManager.detectedOrientation.icon)
-                .font(.system(size: 12))
+                .font(.system(size: 11))
             Text(captureManager.detectedOrientation.displayLabel)
-                .font(FactumTheme.font(12, weight: .semibold))
+                .font(.system(size: 11, weight: .semibold))
         }
-        .foregroundStyle(.white.opacity(0.6))
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(cameraOverlayBg)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .foregroundStyle(.white.opacity(0.5))
         .animation(.easeInOut(duration: 0.2), value: captureManager.detectedOrientation.isLandscape)
     }
 
@@ -1246,8 +1388,8 @@ struct TimelapseCameraView: View {
             
             // Bottom controls
             VStack(spacing: 16) {
-                // Zoom control
-                zoomControl
+                // Zoom level buttons
+                zoomButtons
                 
                 // Timer mode summary
                 timerModeSummary
@@ -1271,12 +1413,6 @@ struct TimelapseCameraView: View {
                 .opacity(isTakingPhoto ? 0.5 : 1.0)
                 .padding(.bottom, 40)
             }
-        }
-        .contentShape(Rectangle())
-        .onTapGesture(count: 2) {
-            Haptics.light()
-            captureManager.flipCamera()
-            zoomAtGestureStart = captureManager.currentZoomFactor
         }
     }
     
@@ -1393,15 +1529,20 @@ struct TimelapseCameraView: View {
                 // Timer display — themed for non-camera background
                 photoTimerDisplay
                 
-                // Subject pill — tap to switch
-                if !lockMode {
-                    subjectPill(isCamera: false)
-                        .padding(.top, 8)
-                }
+                // Subject pill — always visible, tappable only when unlocked
+                subjectPill(isCamera: false)
+                    .padding(.top, 8)
+                    .allowsHitTesting(!lockMode)
+                    .opacity(lockMode ? 0.6 : 1.0)
                 
-                // Lock toggle — below the timer
-                lockButton
-                    .padding(.top, 12)
+                // Lock toggle or hold-to-unlock
+                if lockMode {
+                    holdToUnlockControl(isCamera: false)
+                        .padding(.top, 12)
+                } else {
+                    lockButton
+                        .padding(.top, 12)
+                }
                 
                 // App leave counter
                 if appLeaveCount > 0 {
@@ -1411,34 +1552,31 @@ struct TimelapseCameraView: View {
                 
                 Spacer()
                 
-                // End Session button
-                Button {
-                    Haptics.medium()
-                    cancelDimTimer()
-                    restoreBrightness()
-                    captureManager.stopRecording()
-                    handleTimerEnd()
-                } label: {
-                    Text("End Session")
-                        .font(FactumTheme.font(18, weight: .semibold))
-                        .foregroundStyle(FactumTheme.accentText)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 18)
-                        .background(FactumTheme.accent)
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                // End Session button — only when unlocked
+                if !lockMode {
+                    Button {
+                        Haptics.medium()
+                        cancelDimTimer()
+                        restoreBrightness()
+                        captureManager.stopRecording()
+                        handleTimerEnd()
+                    } label: {
+                        Text("End Session")
+                            .font(FactumTheme.font(18, weight: .semibold))
+                            .foregroundStyle(FactumTheme.accentText)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 18)
+                            .background(FactumTheme.accent)
+                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 50)
                 }
-                .padding(.horizontal, 24)
-                .padding(.bottom, 50)
             }
             
             // Paused overlay
             if captureManager.isPaused {
                 pausedOverlay(isCamera: false)
-            }
-            
-            // Screen lock overlay (covers everything when lock mode is active)
-            if lockMode && !captureManager.isPaused {
-                screenLockOverlay(isCamera: false)
             }
         }
     }
@@ -1769,10 +1907,6 @@ struct TimelapseCameraView: View {
     
     private var lockButton: some View {
         let isOnCamera = phase == .recording
-        let fgOn: Color = isOnCamera ? .white : FactumTheme.accentText
-        let fgOff: Color = isOnCamera ? .white.opacity(0.8) : FactumTheme.secondaryText
-        let bgOn: Color = isOnCamera ? .white.opacity(0.3) : FactumTheme.accent
-        let bgOff: Color = isOnCamera ? .black.opacity(0.4) : FactumTheme.elevated
         
         return Button {
             Haptics.light()
@@ -1780,12 +1914,19 @@ struct TimelapseCameraView: View {
                 lockMode.toggle()
             }
         } label: {
-            Image(systemName: lockMode ? "lock.fill" : "lock.open")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(lockMode ? fgOn : fgOff)
-                .padding(12)
-                .background(lockMode ? bgOn : bgOff)
-                .clipShape(Circle())
+            HStack(spacing: 5) {
+                Image(systemName: lockMode ? "lock.fill" : "lock.open")
+                    .font(.system(size: 13, weight: .semibold))
+                if lockMode {
+                    Text("Locked")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+            }
+            .foregroundStyle(lockMode ? .white : (isOnCamera ? .white.opacity(0.6) : FactumTheme.secondaryText))
+            .padding(.horizontal, lockMode ? 12 : 10)
+            .padding(.vertical, 8)
+            .background(lockMode ? .white.opacity(0.2) : (isOnCamera ? .black.opacity(0.3) : FactumTheme.elevated))
+            .clipShape(Capsule())
         }
         .simultaneousGesture(
             LongPressGesture(minimumDuration: 0.5)
@@ -1800,182 +1941,152 @@ struct TimelapseCameraView: View {
         }
     }
     
-    // MARK: - Screen Lock Overlay
+    // MARK: - Hold to Unlock Control
     
-    private func screenLockOverlay(isCamera: Bool) -> some View {
-        ZStack {
-            (isCamera ? Color.black.opacity(0.85) : FactumTheme.background.opacity(0.95))
-                .ignoresSafeArea()
+    private func holdToUnlockControl(isCamera: Bool) -> some View {
+        let textColor: Color = isCamera ? .white.opacity(0.3) : FactumTheme.tertiaryText
+        let ringBg: Color = isCamera ? .white.opacity(0.1) : FactumTheme.secondaryText.opacity(0.2)
+        let ringFg: Color = isCamera ? .white.opacity(0.8) : FactumTheme.accent
+        let iconColor: Color = isCamera ? .white.opacity(0.5) : FactumTheme.secondaryText
+        
+        return VStack(spacing: 12) {
+            Text("Hold to unlock")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(textColor)
             
-            VStack(spacing: 16) {
-                Image(systemName: "lock.fill")
-                    .font(.system(size: 40))
-                    .foregroundStyle(isCamera ? .white.opacity(0.6) : FactumTheme.secondaryText.opacity(0.6))
+            ZStack {
+                Circle()
+                    .stroke(ringBg, lineWidth: 3)
+                    .frame(width: 64, height: 64)
                 
-                Text("Screen Locked")
-                    .font(FactumTheme.font(20, weight: .semibold))
-                    .foregroundStyle(isCamera ? .white.opacity(0.8) : FactumTheme.primaryText)
+                Circle()
+                    .trim(from: 0, to: unlockProgress)
+                    .stroke(ringFg, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .frame(width: 64, height: 64)
+                    .rotationEffect(.degrees(-90))
                 
-                // Timer still visible
-                Text(formatTime(captureManager.elapsedSeconds))
-                    .font(.system(size: 48, weight: .light, design: .rounded))
-                    .foregroundStyle(isCamera ? .white : FactumTheme.primaryText)
-                
-                // Pomodoro phase indicator
-                if captureManager.timerMode == .pomodoro {
-                    Text(captureManager.isOnBreak ? "Break" : "Focus")
-                        .font(FactumTheme.font(16, weight: .medium))
-                        .foregroundStyle(captureManager.isOnBreak ? .green : (isCamera ? .white.opacity(0.6) : FactumTheme.secondaryText))
-                }
-                
-                // App leave counter on lock screen
-                if appLeaveCount > 0 {
-                    leaveCounter(isCamera: isCamera)
-                        .padding(.top, 8)
-                }
-                
-                Text("Hold to unlock")
-                    .font(FactumTheme.captionFont)
-                    .foregroundStyle(isCamera ? .white.opacity(0.4) : FactumTheme.tertiaryText)
-                    .padding(.top, 12)
-                
-                // Hold-to-unlock button with progress ring
-                ZStack {
-                    // Progress ring
-                    Circle()
-                        .stroke(isCamera ? .white.opacity(0.1) : FactumTheme.elevated, lineWidth: 3)
-                        .frame(width: 64, height: 64)
-                    
-                    Circle()
-                        .trim(from: 0, to: unlockProgress)
-                        .stroke(
-                            isCamera ? Color.white : FactumTheme.accent,
-                            style: StrokeStyle(lineWidth: 3, lineCap: .round)
-                        )
-                        .frame(width: 64, height: 64)
-                        .rotationEffect(.degrees(-90))
-                    
-                    Image(systemName: unlockProgress >= 1.0 ? "lock.open.fill" : "lock.fill")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(isCamera ? .white.opacity(0.7) : FactumTheme.secondaryText)
-                        .contentTransition(.symbolEffect(.replace))
-                }
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { _ in
-                            if holdStartDate == nil {
-                                holdStartDate = Date()
-                                Haptics.light()
-                                withAnimation(.linear(duration: 2.0)) {
-                                    unlockProgress = 1.0
-                                }
-                            }
-                        }
-                        .onEnded { _ in
-                            if let start = holdStartDate, Date().timeIntervalSince(start) >= 2.0 {
-                                // Held long enough — unlock
-                                Haptics.success()
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    lockMode = false
-                                }
-                                unlockProgress = 0
-                            } else {
-                                // Released early — reset
-                                withAnimation(.easeOut(duration: 0.3)) {
-                                    unlockProgress = 0
-                                }
-                            }
-                            holdStartDate = nil
-                        }
-                )
+                Image(systemName: unlockProgress >= 1.0 ? "lock.open.fill" : "lock.fill")
+                    .font(.system(size: 18))
+                    .foregroundStyle(iconColor)
+                    .contentTransition(.symbolEffect(.replace))
             }
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in
+                        if holdStartDate == nil {
+                            holdStartDate = Date()
+                            Haptics.light()
+                            withAnimation(.linear(duration: 2.0)) {
+                                unlockProgress = 1.0
+                            }
+                        }
+                    }
+                    .onEnded { _ in
+                        if let start = holdStartDate, Date().timeIntervalSince(start) >= 2.0 {
+                            Haptics.success()
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                lockMode = false
+                            }
+                            unlockProgress = 0
+                        } else {
+                            withAnimation(.easeOut(duration: 0.3)) {
+                                unlockProgress = 0
+                            }
+                        }
+                        holdStartDate = nil
+                    }
+            )
         }
-        .contentShape(Rectangle())
-        .onTapGesture { } // Eat all taps
     }
     
     // MARK: - Leave Counter
     
     private func leaveCounter(isCamera: Bool) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 4) {
             Image(systemName: "iphone.and.arrow.forward")
-                .font(.system(size: 12, weight: .semibold))
-            Text("Left app \(appLeaveCount) \(appLeaveCount == 1 ? "time" : "times")")
-                .font(FactumTheme.font(12, weight: .medium))
+                .font(.system(size: 10))
+            Text("Left \(appLeaveCount)×")
+                .font(.system(size: 11, weight: .medium))
         }
-        .foregroundStyle(isCamera ? .white.opacity(0.5) : FactumTheme.tertiaryText)
+        .foregroundStyle(isCamera ? .white.opacity(0.4) : FactumTheme.tertiaryText)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(isCamera ? .white.opacity(0.1) : FactumTheme.elevated)
+        .clipShape(Capsule())
     }
     
     // MARK: - Paused Overlay
     
     private func pausedOverlay(isCamera: Bool) -> some View {
         ZStack {
-            // Dim background
-            (isCamera ? Color.black.opacity(0.7) : FactumTheme.background.opacity(0.9))
+            // Frosted dark background
+            (isCamera ? Color.black.opacity(0.8) : FactumTheme.background.opacity(0.95))
                 .ignoresSafeArea()
             
-            VStack(spacing: 24) {
-                // Paused label
-                VStack(spacing: 8) {
-                    Image(systemName: "pause.circle.fill")
-                        .font(.system(size: 48))
-                        .foregroundStyle(isCamera ? .white : FactumTheme.primaryText)
+            VStack(spacing: 28) {
+                Spacer()
+                
+                // Paused indicator
+                VStack(spacing: 12) {
+                    Image(systemName: "pause.fill")
+                        .font(.system(size: 36, weight: .medium))
+                        .foregroundStyle(isCamera ? .white.opacity(0.8) : FactumTheme.primaryText)
                     
                     Text("Paused")
-                        .font(FactumTheme.font(28, weight: .bold))
+                        .font(.system(size: 24, weight: .semibold))
                         .foregroundStyle(isCamera ? .white : FactumTheme.primaryText)
                     
                     Text(formatTime(captureManager.elapsedSeconds))
-                        .font(.system(size: 20, weight: .medium, design: .rounded))
-                        .foregroundStyle(isCamera ? .white.opacity(0.6) : FactumTheme.secondaryText)
+                        .font(.system(size: 48, weight: .light, design: .rounded))
+                        .foregroundStyle(isCamera ? .white.opacity(0.9) : FactumTheme.primaryText)
                         .monospacedDigit()
                 }
                 
-                // Resume button
-                Button {
-                    Haptics.medium()
-                    captureManager.resumeRecording()
-                    scheduleDim()
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "play.fill")
-                        Text("Resume")
-                    }
-                    .font(FactumTheme.font(18, weight: .semibold))
-                    .foregroundStyle(isCamera ? .black : FactumTheme.accentText)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 18)
-                    .background(isCamera ? .white : FactumTheme.accent)
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
-                }
-                .padding(.horizontal, 40)
+                Spacer()
                 
-                // End Session button
-                Button {
-                    Haptics.medium()
-                    // Keep paused (don't stop) so Back can return to paused overlay
-                    if phase == .timerRunning {
-                        handleTimerEnd()
-                    } else {
-                        exportAndProceed()
+                // Controls at bottom — Apple Camera style
+                VStack(spacing: 16) {
+                    // Resume button — large, prominent
+                    Button {
+                        Haptics.medium()
+                        captureManager.resumeRecording()
+                        scheduleDim()
+                    } label: {
+                        ZStack {
+                            Circle()
+                                .strokeBorder(isCamera ? .white : FactumTheme.primaryText, lineWidth: 4)
+                                .frame(width: 72, height: 72)
+                            Image(systemName: "play.fill")
+                                .font(.system(size: 28))
+                                .foregroundStyle(isCamera ? .white : FactumTheme.primaryText)
+                        }
                     }
-                } label: {
-                    Text("End Session")
-                        .font(FactumTheme.font(16, weight: .medium))
-                        .foregroundStyle(isCamera ? .white.opacity(0.7) : FactumTheme.secondaryText)
+                    
+                    // End Session
+                    Button {
+                        Haptics.medium()
+                        if phase == .timerRunning {
+                            handleTimerEnd()
+                        } else {
+                            exportAndProceed()
+                        }
+                    } label: {
+                        Text("End Session")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(isCamera ? .white.opacity(0.6) : FactumTheme.secondaryText)
+                    }
+                    
+                    // Discard
+                    Button {
+                        Haptics.warning()
+                        showDiscardConfirm = true
+                    } label: {
+                        Text("Discard")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.red.opacity(0.7))
+                    }
                 }
-                .padding(.top, 4)
-                
-                // Discard button
-                Button {
-                    Haptics.warning()
-                    showDiscardConfirm = true
-                } label: {
-                    Text("Discard")
-                        .font(FactumTheme.font(14, weight: .medium))
-                        .foregroundStyle(.red.opacity(0.8))
-                }
-                .padding(.top, 8)
+                .padding(.bottom, 60)
             }
         }
         .transition(.opacity)
@@ -2029,14 +2140,20 @@ struct TimelapseCameraView: View {
     
     private func scheduleDim() {
         cancelDimTimer()
+        // Only dim if the user enabled it in Settings
+        guard autoDimEnabled else { return }
+        // Only dim during active recording or timer — never on setup, post, or other screens
+        guard phase == .recording || phase == .timerRunning else { return }
         dimTimer = Timer.scheduledTimer(withTimeInterval: dimDelay, repeats: false) { _ in
             Task { @MainActor in
+                // Double-check phase hasn't changed while timer was waiting
+                guard self.phase == .recording || self.phase == .timerRunning else { return }
                 withAnimation(.easeInOut(duration: 1.0)) {
-                    isDimmed = true
+                    self.isDimmed = true
                 }
-                savedBrightness = UIScreen.main.brightness
+                self.savedBrightness = UIScreen.main.brightness
                 // Gradually lower brightness instead of snapping to black
-                animateBrightness(to: dimmedBrightness, duration: 1.0)
+                self.animateBrightness(to: self.dimmedBrightness, duration: 1.0)
             }
         }
     }
@@ -2143,6 +2260,11 @@ struct CircularTimerRing: View {
 
 struct CameraPreviewView: UIViewRepresentable {
     let session: AVCaptureSession
+    var onDoubleTap: (() -> Void)?
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onDoubleTap: onDoubleTap)
+    }
     
     func makeUIView(context: Context) -> CameraPreviewUIView {
         let view = CameraPreviewUIView()
@@ -2155,11 +2277,32 @@ struct CameraPreviewView: UIViewRepresentable {
            connection.isVideoRotationAngleSupported(90) {
             connection.videoRotationAngle = 90
         }
+        
+        // UIKit double-tap — reliable on UIViewRepresentable, won't
+        // interfere with SwiftUI button taps on overlays above.
+        let doubleTap = UITapGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleDoubleTap))
+        doubleTap.numberOfTapsRequired = 2
+        view.addGestureRecognizer(doubleTap)
+        
         return view
     }
     
     func updateUIView(_ uiView: CameraPreviewUIView, context: Context) {
-        // Preview stays at portrait rotation; nothing to update.
+        context.coordinator.onDoubleTap = onDoubleTap
+    }
+    
+    class Coordinator: NSObject {
+        var onDoubleTap: (() -> Void)?
+        
+        init(onDoubleTap: (() -> Void)?) {
+            self.onDoubleTap = onDoubleTap
+        }
+        
+        @objc func handleDoubleTap() {
+            onDoubleTap?()
+        }
     }
     
     class CameraPreviewUIView: UIView {
@@ -2175,3 +2318,5 @@ struct CameraPreviewView: UIViewRepresentable {
         }
     }
 }
+
+

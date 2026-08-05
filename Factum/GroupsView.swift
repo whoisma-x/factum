@@ -27,7 +27,7 @@ struct GroupsView: View {
                 
                 Text("Coming Soon")
                     .font(FactumTheme.headlineFont)
-                    .foregroundStyle(FactumTheme.accent)
+                    .foregroundStyle(FactumTheme.primaryText)
                 
                 Text("Join study groups, compete on\nleaderboards, and stay motivated together.")
                     .font(FactumTheme.bodyFont)

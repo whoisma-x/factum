@@ -74,8 +74,8 @@ struct ProfileView: View {
                             }
                             .padding(FactumTheme.spacing16)
                             .background(FactumTheme.cardBackground)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                            .shadow(color: FactumTheme.cardShadow, radius: 4, x: 0, y: 1)
+                            .clipShape(OrganicRect(base: FactumTheme.cornerCard))
+                            .shadow(color: FactumTheme.cardShadow, radius: FactumTheme.cardShadowRadius, x: 0, y: FactumTheme.cardShadowY)
                         }
                         .overlay {
                             GeometryReader { geo in
@@ -217,12 +217,15 @@ struct ProfileView: View {
             statCard(value: "\(userTimelapses.count)", label: "Sessions")
             streakCard(days: computedStreakDays)
         }
+        .background(FactumTheme.cardBackground)
+        .clipShape(OrganicRect(base: FactumTheme.cornerCard))
+        .shadow(color: FactumTheme.cardShadow, radius: FactumTheme.cardShadowRadius, x: 0, y: FactumTheme.cardShadowY)
     }
     
     private func statCard(value: String, label: String) -> some View {
         VStack(spacing: 6) {
             Text(value)
-                .font(FactumTheme.font(20, weight: .bold))
+                .font(FactumTheme.font(18, weight: .bold))
                 .foregroundStyle(FactumTheme.primaryText)
             Text(label)
                 .font(FactumTheme.captionFont)
@@ -244,7 +247,7 @@ struct ProfileView: View {
                     .font(.system(size: flameSize))
                     .foregroundStyle(.orange.opacity(flameOpacity))
                 Text("\(days)")
-                    .font(FactumTheme.font(20, weight: .bold))
+                    .font(FactumTheme.font(18, weight: .bold))
                     .foregroundStyle(FactumTheme.primaryText)
             }
             Text("Day Streak")
@@ -260,10 +263,7 @@ struct ProfileView: View {
     private var studyHistorySection: some View {
         VStack(alignment: .leading, spacing: FactumTheme.spacing12) {
             Text("This Week")
-                .font(FactumTheme.font(14, weight: .semibold))
-                .foregroundStyle(FactumTheme.tertiaryText)
-                .textCase(.uppercase)
-                .tracking(1)
+                .factumSectionTitle()
             
             // Weekly activity grid — computed from real session data
             HStack(spacing: 6) {
@@ -308,10 +308,7 @@ struct ProfileView: View {
         VStack(alignment: .leading, spacing: FactumTheme.spacing12) {
             HStack {
                 Text("My Sessions")
-                    .font(FactumTheme.font(14, weight: .semibold))
-                    .foregroundStyle(FactumTheme.tertiaryText)
-                    .textCase(.uppercase)
-                    .tracking(1)
+                    .factumSectionTitle()
                 
                 Spacer()
                 
@@ -375,10 +372,10 @@ struct ProfileView: View {
                     Text("Sign in with Google")
                         .font(FactumTheme.subheadlineFont)
                 }
-                .foregroundStyle(.black)
+                .foregroundStyle(FactumTheme.primaryText)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 14)
-                .background(Color.white)
+                .background(FactumTheme.cardBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
             }
             .padding(.horizontal, 20)
@@ -564,6 +561,7 @@ struct SettingsView: View {
     @State private var scopeErrorMessage = ""
     /// 1 = light, 2 = dark
     @AppStorage("appearanceMode") private var appearanceMode: Int = 0
+    @AppStorage("autoDimScreen") private var autoDimScreen = false
     
     private var currentUser: UserProfile? {
         let uid = AuthService.shared.currentUserID
@@ -596,12 +594,35 @@ struct SettingsView: View {
                             Text("Dark").tag(2)
                         }
                         .pickerStyle(.segmented)
+                        .onAppear {
+                            let serifFont = UIFont(name: "Georgia", size: 13)
+                                ?? UIFont.systemFont(ofSize: 13, weight: .light)
+                            UISegmentedControl.appearance().setTitleTextAttributes(
+                                [.font: serifFont], for: .normal
+                            )
+                            UISegmentedControl.appearance().setTitleTextAttributes(
+                                [.font: serifFont], for: .selected
+                            )
+                        }
                     }
                     .listRowBackground(FactumTheme.cardBackground)
                     NavigationLink {
                         ManageSubjectsView()
                     } label: {
                         settingsRow(icon: "book.fill", title: "Manage Subjects")
+                    }
+                    .listRowBackground(FactumTheme.cardBackground)
+                    
+                    HStack(spacing: 12) {
+                        Image(systemName: "moon.fill")
+                            .foregroundStyle(FactumTheme.secondaryText)
+                            .frame(width: 28)
+                        Toggle(isOn: $autoDimScreen) {
+                            Text("Dim Screen While Recording")
+                                .font(FactumTheme.bodyFont)
+                                .foregroundStyle(FactumTheme.primaryText)
+                        }
+                        .tint(FactumTheme.accent)
                     }
                     .listRowBackground(FactumTheme.cardBackground)
                 } header: {

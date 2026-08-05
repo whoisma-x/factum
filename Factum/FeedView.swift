@@ -131,6 +131,8 @@ struct TimelapseCardView: View {
     @State private var cachedThumbnail: UIImage?
     @State private var cachedAfterPhoto: UIImage?
     @State private var showSubjectBreakdown = false
+    @State private var showStoryStyleSheet = false
+    @State private var showInstagramNotInstalled = false
     
     private var isOwnPost: Bool {
         timelapse.authorID == AuthService.shared.currentUserID
@@ -449,6 +451,19 @@ struct TimelapseCardView: View {
                             .foregroundStyle(FactumTheme.secondaryText)
                     }
                 }
+
+                Button {
+                    Haptics.light()
+                    guard InstagramStoriesSharer.isInstagramInstalled else {
+                        showInstagramNotInstalled = true
+                        return
+                    }
+                    showStoryStyleSheet = true
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 14))
+                        .foregroundStyle(FactumTheme.secondaryText)
+                }
                 
                 Spacer()
             }
@@ -456,7 +471,7 @@ struct TimelapseCardView: View {
             .padding(.vertical, FactumTheme.spacing12)
         }
         .background(FactumTheme.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .clipShape(OrganicRect(base: FactumTheme.cornerCard))
         .shadow(color: FactumTheme.cardShadow, radius: FactumTheme.cardShadowRadius, x: 0, y: FactumTheme.cardShadowY)
         .contentShape(Rectangle())
         .onTapGesture {
@@ -472,6 +487,29 @@ struct TimelapseCardView: View {
             }
         } message: {
             Text("This will permanently delete this study session and its comments. This cannot be undone.")
+        }
+        .alert("Instagram Not Installed", isPresented: $showInstagramNotInstalled) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Install Instagram to share your study sessions as stories.")
+        }
+        .fullScreenCover(isPresented: $showStoryStyleSheet) {
+            let color = StudySubject.color(for: timelapse.subject, in: subjects)
+            let colorResolver: (String) -> Color = { name in
+                StudySubject.color(for: name, in: subjects)
+            }
+            StickerCanvasView(
+                durationSeconds: timelapse.durationSeconds,
+                subjectName: timelapse.subject,
+                subjectColor: color,
+                appLeaveCount: timelapse.appLeaveCount,
+                caption: timelapse.caption,
+                studyDescription: timelapse.studyDescription,
+                subjectSegments: timelapse.subjectSegments,
+                subjectColorResolver: colorResolver,
+                videoURL: timelapse.videoURL,
+                onExport: {}
+            )
         }
         .onAppear {
             let uid = AuthService.shared.currentUserID
@@ -570,6 +608,8 @@ struct TimelapseDetailView: View {
     @State private var isLiked = false
     @State private var cachedThumbnail: UIImage?
     @State private var cachedAfterPhoto: UIImage?
+    @State private var showInstagramNotInstalled = false
+    @State private var showStoryStyleSheet = false
     
     private var currentUserName: String {
         let uid = AuthService.shared.currentUserID
@@ -773,6 +813,19 @@ struct TimelapseDetailView: View {
                         }
                         
                         Spacer()
+                        
+                        Button {
+                            Haptics.light()
+                            guard InstagramStoriesSharer.isInstagramInstalled else {
+                                showInstagramNotInstalled = true
+                                return
+                            }
+                            showStoryStyleSheet = true
+                        } label: {
+                            Image(systemName: "square.and.arrow.up")
+                                .font(.system(size: 18))
+                                .foregroundStyle(FactumTheme.secondaryText)
+                        }
                     }
                     
                     Divider()
@@ -843,6 +896,29 @@ struct TimelapseDetailView: View {
             }
             .toolbarBackground(FactumTheme.background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
+            .alert("Instagram Not Found", isPresented: $showInstagramNotInstalled) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text("Install Instagram to share your study stats to your Story.")
+            }
+            .fullScreenCover(isPresented: $showStoryStyleSheet) {
+                let color = StudySubject.color(for: timelapse.subject, in: subjects)
+                let colorResolver: (String) -> Color = { name in
+                    StudySubject.color(for: name, in: subjects)
+                }
+                StickerCanvasView(
+                    durationSeconds: timelapse.durationSeconds,
+                    subjectName: timelapse.subject,
+                    subjectColor: color,
+                    appLeaveCount: timelapse.appLeaveCount,
+                    caption: timelapse.caption,
+                    studyDescription: timelapse.studyDescription,
+                    subjectSegments: timelapse.subjectSegments,
+                    subjectColorResolver: colorResolver,
+                    videoURL: timelapse.videoURL,
+                    onExport: {}
+                )
+            }
             .onAppear {
                 let uid = AuthService.shared.currentUserID
                 isLiked = timelapse.likedByUIDs.contains(uid)

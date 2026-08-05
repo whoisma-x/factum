@@ -32,8 +32,11 @@ struct PostCaptionView: View {
     @State private var isSavingToPhotos = false
     @State private var currentPhotoIndex = 0
     @State private var showDiscardConfirm = false
+    @State private var showInstagramNotInstalled = false
+    @State private var showStoryStyleSheet = false
     @FocusState private var focusedField: Field?
     @Query private var users: [UserProfile]
+    @Query(sort: \StudySubject.sortOrder) private var subjects: [StudySubject]
     
     private var currentUser: UserProfile? {
         let uid = AuthService.shared.currentUserID
@@ -211,6 +214,32 @@ struct PostCaptionView: View {
                         }
                         .disabled(savedToPhotos || isSavingToPhotos)
                     }
+
+                    // Share to Instagram Story
+                    Button {
+                        Haptics.light()
+                        guard InstagramStoriesSharer.isInstagramInstalled else {
+                            showInstagramNotInstalled = true
+                            return
+                        }
+                        showStoryStyleSheet = true
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "camera.fill")
+                                .font(.system(size: 16))
+                            Text("Share to Instagram Story")
+                                .font(FactumTheme.subheadlineFont)
+                        }
+                        .foregroundStyle(FactumTheme.primaryText)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                        .background(FactumTheme.cardBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14)
+                                .strokeBorder(FactumTheme.separator, lineWidth: 1)
+                        )
+                    }
                 }
                 .padding(16)
             }
@@ -262,6 +291,29 @@ struct PostCaptionView: View {
                 Button("Cancel", role: .cancel) { }
             } message: {
                 Text("Your study session won't be saved. Are you sure you want to discard it?")
+            }
+            .alert("Instagram Not Found", isPresented: $showInstagramNotInstalled) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text("Install Instagram to share your study stats to your Story.")
+            }
+            .fullScreenCover(isPresented: $showStoryStyleSheet) {
+                let color = StudySubject.color(for: primarySubjectName, in: subjects)
+                let colorResolver: (String) -> Color = { name in
+                    StudySubject.color(for: name, in: subjects)
+                }
+                StickerCanvasView(
+                    durationSeconds: durationSeconds,
+                    subjectName: primarySubjectName,
+                    subjectColor: color,
+                    appLeaveCount: appLeaveCount,
+                    caption: caption,
+                    studyDescription: studyDescription,
+                    subjectSegments: subjectSegments,
+                    subjectColorResolver: colorResolver,
+                    videoURL: videoURL,
+                    onExport: {}
+                )
             }
         }
         .presentationBackground(FactumTheme.background)

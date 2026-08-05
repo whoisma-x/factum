@@ -27,7 +27,7 @@ struct FriendsView: View {
                 
                 Text("Coming Soon")
                     .font(FactumTheme.headlineFont)
-                    .foregroundStyle(FactumTheme.accent)
+                    .foregroundStyle(FactumTheme.primaryText)
                 
                 Text("Add friends, see what they're studying,\nand hold each other accountable.")
                     .font(FactumTheme.bodyFont)

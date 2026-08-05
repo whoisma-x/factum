@@ -121,6 +121,7 @@ struct ContentView: View {
             if authService.isSignedIn {
                 hasResolvedAuth = true
                 await syncFromCloud()
+                seedDemoDataIfNeeded()
             } else {
                 showOnboarding = true
                 hasResolvedAuth = true
@@ -132,6 +133,7 @@ struct ContentView: View {
                 hasResolvedAuth = true
                 Task {
                     await syncFromCloud()
+                    seedDemoDataIfNeeded()
                     if !hasSeenTutorial {
                         try? await Task.sleep(for: .milliseconds(800))
                         showTutorial = true
@@ -250,6 +252,15 @@ struct ContentView: View {
     // MARK: - Local Setup
     
     @MainActor
+    private func seedDemoDataIfNeeded() {
+        let uid = authService.currentUserID
+        guard !uid.isEmpty else { return }
+        let profile = users.first { $0.firebaseUID == uid }
+        let name = profile?.displayName ?? "Demo User"
+        let email = profile?.email ?? ""
+        SampleData.seedDemoDataIfNeeded(authorID: uid, authorName: name, email: email, context: modelContext)
+    }
+
     private func syncFromCloud() async {
         let uid = authService.currentUserID
         guard !uid.isEmpty else {
@@ -260,10 +271,42 @@ struct ContentView: View {
         // Sync user profile from Supabase (creates local profile if needed)
         await SupabaseService.shared.syncUserProfile(uid: uid, context: modelContext)
         
-        // Sync study subjects from Supabase, seed defaults if none found
+        // One-time migration: the first user to log in on this device gets
+        // their local subjects pushed to Supabase. This preserves subjects
+        // created before cloud sync existed. Runs once per device.
+        let migrationKey = "factum_subjects_pushed_to_cloud"
+        if !UserDefaults.standard.bool(forKey: migrationKey) {
+            UserDefaults.standard.set(true, forKey: migrationKey)
+            let preDescriptor = FetchDescriptor<StudySubject>()
+            let localSubjects = (try? modelContext.fetch(preDescriptor)) ?? []
+            if !localSubjects.isEmpty {
+                // Only push if cloud has no subjects yet (don't overwrite existing cloud data)
+                let profile = try? await SupabaseService.shared.fetchUserProfile(uid: uid)
+                if (profile?.subjects ?? []).isEmpty {
+                    try? await SupabaseService.shared.saveSubjects(localSubjects, forUser: uid)
+                    print("[SYNC] Migration: pushed \(localSubjects.count) local subjects to Supabase for \(uid)")
+                }
+            }
+        }
+
+        // Sync study subjects from Supabase (full replacement of local subjects).
+        // If cloud has subjects, they completely replace whatever is local.
+        // If cloud has no subjects, seed defaults locally and push them.
         let hadCloudSubjects = await SupabaseService.shared.syncSubjects(forUser: uid, context: modelContext)
         if !hadCloudSubjects {
+            // Delete any leftover subjects from other accounts
+            let staleDescriptor = FetchDescriptor<StudySubject>()
+            let staleSubjects = (try? modelContext.fetch(staleDescriptor)) ?? []
+            for s in staleSubjects { modelContext.delete(s) }
+
+            // Seed fresh defaults for this account
             StudySubject.seedDefaultsIfNeeded(context: modelContext)
+            let subjectDescriptor = FetchDescriptor<StudySubject>()
+            let seededSubjects = (try? modelContext.fetch(subjectDescriptor)) ?? []
+            if !seededSubjects.isEmpty {
+                try? await SupabaseService.shared.saveSubjects(seededSubjects, forUser: uid)
+                print("[SYNC] Pushed \(seededSubjects.count) default subjects to Supabase")
+            }
         }
         
         // Sync timelapse session records from Supabase (restores study history)

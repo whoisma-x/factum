@@ -17,6 +17,7 @@ enum StatsViewMode: String, CaseIterable {
     case weekly = "Week"
     case monthly = "Month"
     case yearly = "Year"
+    case lifetime = "Lifetime"
 }
 
 // MARK: - Stats View
@@ -52,6 +53,8 @@ struct StatsView: View {
         case .yearly:
             guard let yearInterval = calendar.dateInterval(of: .year, for: referenceDate) else { return [] }
             return userTimelapses.filter { $0.createdAt >= yearInterval.start && $0.createdAt < yearInterval.end }
+        case .lifetime:
+            return userTimelapses
         }
     }
     
@@ -73,9 +76,11 @@ struct StatsView: View {
             return referenceDate.formatted(.dateTime.month(.wide).year())
         case .yearly:
             return referenceDate.formatted(.dateTime.year())
+        case .lifetime:
+            return "All Time"
         }
     }
-    
+
     private var canGoForward: Bool {
         switch selectedMode {
         case .daily:
@@ -92,6 +97,8 @@ struct StatsView: View {
             return refYear < curYear || (refYear == curYear && refMonth < curMonth)
         case .yearly:
             return calendar.component(.year, from: referenceDate) < calendar.component(.year, from: Date())
+        case .lifetime:
+            return false
         }
     }
     
@@ -136,8 +143,10 @@ struct StatsView: View {
                     MonthlyStatsView(timelapses: filteredTimelapses, subjects: subjects, referenceDate: referenceDate)
                 case .yearly:
                     YearlyStatsView(timelapses: filteredTimelapses, subjects: subjects, referenceDate: referenceDate)
+                case .lifetime:
+                    LifetimeStatsView(timelapses: filteredTimelapses, subjects: subjects)
                 }
-                
+
                 // Summary
                 summaryStats
             }
@@ -159,7 +168,7 @@ struct StatsView: View {
                     }
                 } label: {
                     Text(mode.rawValue)
-                        .font(FactumTheme.font(13, weight: selectedMode == mode ? .semibold : .regular))
+                        .font(FactumTheme.font(12, weight: selectedMode == mode ? .semibold : .regular))
                         .foregroundStyle(selectedMode == mode ? FactumTheme.accentText : FactumTheme.secondaryText)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 10)
@@ -178,38 +187,42 @@ struct StatsView: View {
     
     private var dateNavigator: some View {
         HStack {
-            Button {
-                Haptics.light()
-                withAnimation(.easeInOut(duration: 0.2)) { navigateBack() }
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(FactumTheme.primaryText)
-                    .frame(width: 36, height: 36)
-                    .background(FactumTheme.cardBackground)
-                    .clipShape(Circle())
+            if selectedMode != .lifetime {
+                Button {
+                    Haptics.light()
+                    withAnimation(.easeInOut(duration: 0.2)) { navigateBack() }
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(FactumTheme.primaryText)
+                        .frame(width: 36, height: 36)
+                        .background(FactumTheme.cardBackground)
+                        .clipShape(Circle())
+                }
             }
-            
+
             Spacer()
-            
+
             Text(dateLabel)
                 .font(FactumTheme.subheadlineFont)
                 .foregroundStyle(FactumTheme.primaryText)
-            
+
             Spacer()
-            
-            Button {
-                Haptics.light()
-                withAnimation(.easeInOut(duration: 0.2)) { navigateForward() }
-            } label: {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(canGoForward ? FactumTheme.primaryText : FactumTheme.tertiaryText)
-                    .frame(width: 36, height: 36)
-                    .background(FactumTheme.cardBackground)
-                    .clipShape(Circle())
+
+            if selectedMode != .lifetime {
+                Button {
+                    Haptics.light()
+                    withAnimation(.easeInOut(duration: 0.2)) { navigateForward() }
+                } label: {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(canGoForward ? FactumTheme.primaryText : FactumTheme.tertiaryText)
+                        .frame(width: 36, height: 36)
+                        .background(FactumTheme.cardBackground)
+                        .clipShape(Circle())
+                }
+                .disabled(!canGoForward)
             }
-            .disabled(!canGoForward)
         }
         .padding(.horizontal, 16)
     }
@@ -224,9 +237,11 @@ struct StatsView: View {
             referenceDate = calendar.date(byAdding: .month, value: -1, to: referenceDate) ?? referenceDate
         case .yearly:
             referenceDate = calendar.date(byAdding: .year, value: -1, to: referenceDate) ?? referenceDate
+        case .lifetime:
+            break
         }
     }
-    
+
     private func navigateForward() {
         guard canGoForward else { return }
         switch selectedMode {
@@ -238,6 +253,8 @@ struct StatsView: View {
             referenceDate = calendar.date(byAdding: .month, value: 1, to: referenceDate) ?? referenceDate
         case .yearly:
             referenceDate = calendar.date(byAdding: .year, value: 1, to: referenceDate) ?? referenceDate
+        case .lifetime:
+            break
         }
     }
     
@@ -248,30 +265,38 @@ struct StatsView: View {
         let sessionCount = filteredTimelapses.count
         let uniqueSubjects = Set(filteredTimelapses.flatMap { $0.subjectSegments.map(\.subject) }).count
         let totalLeaves = filteredTimelapses.reduce(0) { $0 + $1.appLeaveCount }
-        
+        let avgPerSession = sessionCount > 0 ? Double(totalLeaves) / Double(sessionCount) : 0
+        let totalHours = Double(totalSeconds) / 3600.0
+        let avgLeavesPerHour = totalHours > 0 ? Double(totalLeaves) / totalHours : 0
+        let longestSession = filteredTimelapses.max(by: { $0.durationSeconds < $1.durationSeconds })?.durationSeconds ?? 0
+        let mostLeavesInSession = filteredTimelapses.max(by: { $0.appLeaveCount < $1.appLeaveCount })?.appLeaveCount ?? 0
+
         return VStack(alignment: .leading, spacing: 12) {
             Text("Summary")
                 .font(FactumTheme.headlineFont)
                 .foregroundStyle(FactumTheme.primaryText)
-            
+
             HStack(spacing: 12) {
                 summaryCard(value: formatDuration(totalSeconds), label: "Total Time")
                 summaryCard(value: "\(sessionCount)", label: "Sessions")
                 summaryCard(value: "\(uniqueSubjects)", label: "Subjects")
             }
-            
+
             HStack(spacing: 12) {
                 summaryCard(value: "\(totalLeaves)", label: "App Leaves")
                     .overlay(
-                        RoundedRectangle(cornerRadius: 12)
+                        RoundedRectangle(cornerRadius: FactumTheme.cornerCard)
                             .strokeBorder(totalLeaves == 0 ? .green.opacity(0.3) : .red.opacity(0.3), lineWidth: 1)
                     )
-                
-                // Average per session
-                let avg = sessionCount > 0 ? Double(totalLeaves) / Double(sessionCount) : 0
-                summaryCard(value: String(format: "%.1f", avg), label: "Avg per Session")
+                summaryCard(value: String(format: "%.1f", avgPerSession), label: "Avg/Session")
+                summaryCard(value: String(format: "%.1f", avgLeavesPerHour), label: "Avg/Hour")
             }
-            
+
+            HStack(spacing: 12) {
+                summaryCard(value: formatDuration(longestSession), label: "Longest Session")
+                summaryCard(value: "\(mostLeavesInSession)", label: "Most Leaves")
+            }
+
             // Most studied highlights
             mostStudiedSection
         }
@@ -387,7 +412,8 @@ struct StatsView: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)
         .background(FactumTheme.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .clipShape(RoundedRectangle(cornerRadius: FactumTheme.cornerCard))
+        .shadow(color: FactumTheme.cardShadow, radius: FactumTheme.cardShadowRadius, x: 0, y: FactumTheme.cardShadowY)
     }
 }
 
@@ -574,11 +600,27 @@ struct DailyStatsView: View {
     let timelapses: [StudyTimelapse]
     let subjects: [StudySubject]
     let referenceDate: Date
-    
+
     var body: some View {
+        SwipeableCard(
+            { dailyDonut },
+            page1: { dailyLeavesPerHour }
+        )
+    }
+
+    private var dailyDonut: some View {
         let bd = subjectBreakdown(from: timelapses, subjects: subjects)
         let label = Calendar.current.isDateInToday(referenceDate) ? "today" : referenceDate.formatted(.dateTime.month(.abbreviated).day())
-        DonutChartView(breakdown: bd, centerLabel: label)
+        return DonutChartContent(breakdown: bd, centerLabel: label)
+    }
+
+    private var dailyLeavesPerHour: some View {
+        let data: [(date: Date, rate: Double)] = timelapses.map { t in
+            let hours = Double(t.durationSeconds) / 3600.0
+            let rate = hours > 0 ? Double(t.appLeaveCount) / hours : 0
+            return (date: t.createdAt, rate: rate)
+        }.sorted { $0.date < $1.date }
+        return AppLeavesPerHourChartContent(data: data)
     }
 }
 
@@ -651,13 +693,27 @@ struct WeeklyStatsView: View {
     }
     
     var body: some View {
-        SwipeableCard {
-            weeklyBarChart
-        } page1: {
-            weeklyDonut
-        }
+        SwipeableCard(
+            { weeklyBarChart },
+            page1: { weeklyDonut },
+            page2: { weeklyLeavesPerHour }
+        )
     }
-    
+
+    private var weeklyLeavesPerHour: some View {
+        // Aggregate leaves/hr per day of the week
+        let grouped = Dictionary(grouping: timelapses) { t in
+            calendar.startOfDay(for: t.createdAt)
+        }
+        let data: [(date: Date, rate: Double)] = grouped.map { day, sessions in
+            let totalLeaves = sessions.reduce(0) { $0 + $1.appLeaveCount }
+            let totalHours = Double(sessions.reduce(0) { $0 + $1.durationSeconds }) / 3600.0
+            let rate = totalHours > 0 ? Double(totalLeaves) / totalHours : 0
+            return (date: day, rate: rate)
+        }.sorted { $0.date < $1.date }
+        return AppLeavesPerHourChartContent(data: data)
+    }
+
     private var weeklyBarChart: some View {
         VStack(spacing: 20) {
             if chartData.isEmpty {
@@ -850,13 +906,27 @@ struct MonthlyStatsView: View {
     }
     
     var body: some View {
-        SwipeableCard {
-            calendarGrid
-        } page1: {
-            monthlyDonut
-        }
+        SwipeableCard(
+            { calendarGrid },
+            page1: { monthlyDonut },
+            page2: { monthlyLeavesPerHour }
+        )
     }
-    
+
+    private var monthlyLeavesPerHour: some View {
+        // Aggregate leaves/hr per day of the month
+        let grouped = Dictionary(grouping: timelapses) { t in
+            calendar.startOfDay(for: t.createdAt)
+        }
+        let data: [(date: Date, rate: Double)] = grouped.map { day, sessions in
+            let totalLeaves = sessions.reduce(0) { $0 + $1.appLeaveCount }
+            let totalHours = Double(sessions.reduce(0) { $0 + $1.durationSeconds }) / 3600.0
+            let rate = totalHours > 0 ? Double(totalLeaves) / totalHours : 0
+            return (date: day, rate: rate)
+        }.sorted { $0.date < $1.date }
+        return AppLeavesPerHourChartContent(data: data)
+    }
+
     /// All cells: leading empties + day 1..daysInMonth + trailing empties, grouped into rows of 7.
     private var calendarRows: [[Int?]] {
         var cells: [Int?] = Array(repeating: nil, count: firstWeekdayOffset)
@@ -1034,13 +1104,29 @@ struct YearlyStatsView: View {
     }
     
     var body: some View {
-        SwipeableCard {
-            yearlyBarChart
-        } page1: {
-            yearlyDonut
-        }
+        SwipeableCard(
+            { yearlyBarChart },
+            page1: { yearlyDonut },
+            page2: { yearlyLeavesPerHour }
+        )
     }
-    
+
+    private var yearlyLeavesPerHour: some View {
+        // Aggregate leaves/hr per month of the year
+        let grouped = Dictionary(grouping: timelapses) { t in
+            calendar.component(.month, from: t.createdAt)
+        }
+        let year = calendar.component(.year, from: referenceDate)
+        let data: [(date: Date, rate: Double)] = grouped.compactMap { month, sessions in
+            guard let monthDate = calendar.date(from: DateComponents(year: year, month: month, day: 1)) else { return nil }
+            let totalLeaves = sessions.reduce(0) { $0 + $1.appLeaveCount }
+            let totalHours = Double(sessions.reduce(0) { $0 + $1.durationSeconds }) / 3600.0
+            let rate = totalHours > 0 ? Double(totalLeaves) / totalHours : 0
+            return (date: monthDate, rate: rate)
+        }.sorted { $0.date < $1.date }
+        return AppLeavesPerHourChartContent(data: data, xUnit: .month)
+    }
+
     private var yearlyBarChart: some View {
         VStack(spacing: 20) {
             if chartData.isEmpty {
@@ -1156,50 +1242,184 @@ struct YearlyStatsView: View {
     }
 }
 
-// MARK: - Height Preference Keys
+// MARK: - App Leaves Per Hour Chart
 
-private struct Height0Key: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+struct AppLeavesPerHourChartContent: View {
+    let data: [(date: Date, rate: Double)]
+    var xUnit: Calendar.Component = .day
+
+    var body: some View {
+        VStack(spacing: 20) {
+            if data.isEmpty || data.allSatisfy({ $0.rate == 0 }) {
+                VStack(spacing: 12) {
+                    Image(systemName: "hand.thumbsup.fill")
+                        .font(.system(size: 40))
+                        .foregroundStyle(FactumTheme.tertiaryText)
+                    Text("No app leaves")
+                        .font(FactumTheme.subheadlineFont)
+                        .foregroundStyle(FactumTheme.secondaryText)
+                    Text("Great focus!")
+                        .font(FactumTheme.captionFont)
+                        .foregroundStyle(FactumTheme.tertiaryText)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 40)
+            } else {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        let nonZero = data.filter { $0.rate > 0 }
+                        let avgRate = nonZero.isEmpty ? 0 : nonZero.reduce(0.0) { $0 + $1.rate } / Double(nonZero.count)
+                        Text(String(format: "%.1f", avgRate))
+                            .font(FactumTheme.font(24, weight: .bold))
+                            .foregroundStyle(FactumTheme.primaryText)
+                        Text("avg leaves/hr")
+                            .font(FactumTheme.captionFont)
+                            .foregroundStyle(FactumTheme.secondaryText)
+                    }
+                    Spacer()
+                }
+
+                Chart(Array(data.enumerated()), id: \.offset) { _, item in
+                    PointMark(
+                        x: .value("Time", item.date, unit: xUnit),
+                        y: .value("Leaves/hr", item.rate)
+                    )
+                    .foregroundStyle(
+                        item.rate <= 1.0 ? Color.green :
+                        item.rate <= 3.0 ? Color.orange : Color.red
+                    )
+                    .symbolSize(40)
+                }
+                .chartYAxis {
+                    AxisMarks { _ in
+                        AxisGridLine().foregroundStyle(FactumTheme.separator)
+                        AxisValueLabel().foregroundStyle(FactumTheme.tertiaryText)
+                    }
+                }
+                .chartYAxisLabel("leaves/hr", position: .trailing)
+                .frame(height: 220)
+            }
+        }
+        .padding(16)
+    }
 }
-private struct Height1Key: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+
+// MARK: - Comparison Palette
+
+private let comparisonPalette: [Color] = [
+    Color(hex: "#3478F6")!,   // Blue
+    Color(hex: "#FF3B30")!,   // Red
+    Color(hex: "#34C759")!,   // Green
+    Color(hex: "#FF9500")!,   // Orange
+    Color(hex: "#AF52DE")!,   // Purple
+    Color(hex: "#5AC8FA")!,   // Teal
+    Color(hex: "#FF2D55")!,   // Pink
+    Color(hex: "#A2845E")!,   // Brown
+    Color(hex: "#FFCC00")!,   // Yellow
+    Color(hex: "#00C7BE")!,   // Mint
+    Color(hex: "#BF5AF2")!,   // Indigo
+    Color(hex: "#64D2FF")!,   // Cyan
+]
+
+// MARK: - Lifetime Stats View
+
+struct LifetimeStatsView: View {
+    let timelapses: [StudyTimelapse]
+    let subjects: [StudySubject]
+
+    private let calendar = Calendar.current
+
+    var body: some View {
+        SwipeableCard(
+            { subjectDonut },
+            page1: { yearComparisonDonut },
+            page2: { monthComparisonDonut }
+        )
+    }
+
+    // Slide 1: All-time subject breakdown donut
+    private var subjectDonut: some View {
+        let bd = subjectBreakdown(from: timelapses, subjects: subjects)
+        return DonutChartContent(breakdown: bd, centerLabel: "all time")
+    }
+
+    // Slide 2: Year comparison donut
+    private var yearComparisonDonut: some View {
+        let byYear = Dictionary(grouping: timelapses) { t in
+            calendar.component(.year, from: t.createdAt)
+        }
+        let breakdown: [(subject: String, seconds: Int, color: Color)] = byYear
+            .map { (year: $0.key, seconds: $0.value.reduce(0) { $0 + $1.durationSeconds }) }
+            .sorted { $0.year < $1.year }
+            .enumerated()
+            .map { index, item in
+                (subject: "\(item.year)", seconds: item.seconds, color: comparisonPalette[index % comparisonPalette.count])
+            }
+        return DonutChartContent(breakdown: breakdown, centerLabel: "by year")
+    }
+
+    // Slide 3: Month comparison donut
+    private var monthComparisonDonut: some View {
+        let byMonth = Dictionary(grouping: timelapses) { t in
+            calendar.dateComponents([.year, .month], from: t.createdAt)
+        }
+        let breakdown: [(subject: String, seconds: Int, color: Color)] = byMonth
+            .compactMap { comps, sessions -> (label: String, seconds: Int, sortKey: Date)? in
+                guard let date = calendar.date(from: comps) else { return nil }
+                let label = date.formatted(.dateTime.month(.abbreviated).year())
+                let secs = sessions.reduce(0) { $0 + $1.durationSeconds }
+                return (label: label, seconds: secs, sortKey: date)
+            }
+            .sorted { $0.sortKey < $1.sortKey }
+            .enumerated()
+            .map { index, item in
+                (subject: item.label, seconds: item.seconds, color: comparisonPalette[index % comparisonPalette.count])
+            }
+        return DonutChartContent(breakdown: breakdown, centerLabel: "by month")
+    }
 }
 
-// MARK: - Swipeable Card (two-page container with natural height)
+// MARK: - Page Height Preference Key
 
-struct SwipeableCard<Page0: View, Page1: View>: View {
-    @ViewBuilder var page0: Page0
-    @ViewBuilder var page1: Page1
-    
+private struct PageHeightPreferenceKey: PreferenceKey {
+    static let defaultValue: [Int: CGFloat] = [:]
+    static func reduce(value: inout [Int: CGFloat], nextValue: () -> [Int: CGFloat]) {
+        value.merge(nextValue()) { _, new in new }
+    }
+}
+
+// MARK: - Swipeable Card (N-page container with natural height)
+
+struct SwipeableCard: View {
+    let pages: [AnyView]
+
     @State private var currentPage = 0
     @State private var dragOffset: CGFloat = 0
-    @State private var height0: CGFloat = 450
-    @State private var height1: CGFloat = 450
+    @State private var pageHeights: [Int: CGFloat] = [:]
     @State private var cardWidth: CGFloat = 0
-    
+
+    private var pageCount: Int { pages.count }
+
     private var activeHeight: CGFloat {
-        max(currentPage == 0 ? height0 : height1, 50)
+        max(pageHeights[currentPage] ?? 450, 50)
     }
-    
+
     var body: some View {
         VStack(spacing: 0) {
-            // Visible sliding content — each page measures itself
             Color.clear
                 .frame(height: activeHeight)
                 .overlay(alignment: .topLeading) {
                     HStack(alignment: .top, spacing: 0) {
-                        page0
-                            .frame(width: max(cardWidth, 1), alignment: .top)
-                            .background(GeometryReader { g in
-                                Color.clear.preference(key: Height0Key.self, value: g.size.height)
-                            })
-                        page1
-                            .frame(width: max(cardWidth, 1), alignment: .top)
-                            .background(GeometryReader { g in
-                                Color.clear.preference(key: Height1Key.self, value: g.size.height)
-                            })
+                        ForEach(Array(pages.enumerated()), id: \.offset) { index, page in
+                            page
+                                .frame(width: max(cardWidth, 1), alignment: .top)
+                                .background(GeometryReader { g in
+                                    Color.clear.preference(
+                                        key: PageHeightPreferenceKey.self,
+                                        value: [index: g.size.height]
+                                    )
+                                })
+                        }
                     }
                     .offset(x: -CGFloat(currentPage) * max(cardWidth, 1) + dragOffset)
                 }
@@ -1220,35 +1440,54 @@ struct SwipeableCard<Page0: View, Page1: View>: View {
                         .onEnded { value in
                             let threshold: CGFloat = 60
                             withAnimation(.easeInOut(duration: 0.25)) {
-                                if value.translation.width < -threshold && currentPage == 0 {
-                                    currentPage = 1
-                                } else if value.translation.width > threshold && currentPage == 1 {
-                                    currentPage = 0
+                                if value.translation.width < -threshold && currentPage < pageCount - 1 {
+                                    currentPage += 1
+                                } else if value.translation.width > threshold && currentPage > 0 {
+                                    currentPage -= 1
                                 }
                                 dragOffset = 0
                             }
                         }
                 )
-            
-            // Page indicators at bottom
-            HStack(spacing: 6) {
-                ForEach(0..<2, id: \.self) { i in
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(i == currentPage
-                              ? FactumTheme.primaryText : FactumTheme.separator)
-                        .frame(width: i == currentPage ? 16 : 6, height: 6)
+
+            // Page indicators
+            if pageCount > 1 {
+                HStack(spacing: 6) {
+                    ForEach(0..<pageCount, id: \.self) { i in
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(i == currentPage
+                                  ? FactumTheme.primaryText : FactumTheme.separator)
+                            .frame(width: i == currentPage ? 16 : 6, height: 6)
+                    }
                 }
+                .padding(.top, 8)
+                .padding(.bottom, 12)
+                .animation(.easeInOut(duration: 0.15), value: currentPage)
             }
-            .padding(.top, 8)
-            .padding(.bottom, 12)
-            .animation(.easeInOut(duration: 0.15), value: currentPage)
         }
         .background(FactumTheme.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .padding(.horizontal, 16)
-        .onPreferenceChange(Height0Key.self) { height0 = $0 }
-        .onPreferenceChange(Height1Key.self) { height1 = $0 }
+        .onPreferenceChange(PageHeightPreferenceKey.self) { pageHeights = $0 }
         .animation(.easeInOut(duration: 0.25), value: activeHeight)
+    }
+}
+
+// Convenience initializers for backward compatibility
+extension SwipeableCard {
+    init<P0: View, P1: View>(
+        @ViewBuilder _ page0: () -> P0,
+        @ViewBuilder page1: () -> P1
+    ) {
+        self.init(pages: [AnyView(page0()), AnyView(page1())])
+    }
+
+    init<P0: View, P1: View, P2: View>(
+        @ViewBuilder _ page0: () -> P0,
+        @ViewBuilder page1: () -> P1,
+        @ViewBuilder page2: () -> P2
+    ) {
+        self.init(pages: [AnyView(page0()), AnyView(page1()), AnyView(page2())])
     }
 }
 
