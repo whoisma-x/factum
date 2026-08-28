@@ -1,6 +1,6 @@
 //
 //  OnboardingView.swift
-//  Factum
+//  Pigeon
 //
 //  First-launch onboarding flow
 //
@@ -20,9 +20,14 @@ struct OnboardingView: View {
     @State private var email = ""
     @State private var password = ""
     @State private var displayName = ""
+    @State private var username = ""
+    @State private var usernameAvailable: Bool? = nil
+    @State private var isCheckingUsername = false
+    @State private var usernameCheckTask: Task<Void, Never>?
     @State private var confirmPassword = ""
     @State private var signUpSuccess = false
     @State private var showGoogleProfileSetup = false
+    @State private var isPrivateAccount = true
     @FocusState private var focusedField: AuthField?
     let onComplete: () -> Void
     
@@ -32,7 +37,7 @@ struct OnboardingView: View {
     
     var body: some View {
         ZStack {
-            FactumTheme.background.ignoresSafeArea()
+            PigeonTheme.background.ignoresSafeArea()
             
             VStack(spacing: 0) {
                 // Pages
@@ -50,7 +55,7 @@ struct OnboardingView: View {
                     HStack(spacing: 8) {
                         ForEach(0..<4, id: \.self) { index in
                             RoundedRectangle(cornerRadius: 3)
-                                .fill(index == currentPage ? FactumTheme.accent : FactumTheme.elevated)
+                                .fill(index == currentPage ? PigeonTheme.accent : PigeonTheme.elevated)
                                 .frame(width: index == currentPage ? 24 : 8, height: 8)
                                 .animation(.easeInOut(duration: 0.25), value: currentPage)
                         }
@@ -63,11 +68,11 @@ struct OnboardingView: View {
                         }
                     } label: {
                         Text("Next")
-                            .font(FactumTheme.subheadlineFont)
-                            .foregroundStyle(FactumTheme.accentText)
+                            .font(PigeonTheme.subheadlineFont)
+                            .foregroundStyle(PigeonTheme.accentText)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 16)
-                            .background(FactumTheme.accent)
+                            .background(PigeonTheme.accent)
                             .clipShape(RoundedRectangle(cornerRadius: 14))
                     }
                     .buttonStyle(.plain)
@@ -95,19 +100,19 @@ struct OnboardingView: View {
         VStack(spacing: 24) {
             Spacer()
             
-            FactumIcon(size: 120, color: FactumTheme.primaryText)
+            PigeonIcon(size: 180, color: PigeonTheme.primaryText)
                 .scaleEffect(isAnimating ? 1.0 : 0.8)
                 .opacity(isAnimating ? 1.0 : 0)
                 .animation(.spring(response: 0.8, dampingFraction: 0.6), value: isAnimating)
             
-            Text("factum")
-                .font(.system(size: 38, weight: .light, design: .serif))
-                .foregroundStyle(FactumTheme.primaryText)
-                .tracking(4)
+            Text("pigeon.")
+                .font(.gloucester(size: 48))
+                .foregroundStyle(PigeonTheme.primaryText)
+                .tracking(6)
             
             Text("a quiet place to study")
-                .font(FactumTheme.bodyFont)
-                .foregroundStyle(FactumTheme.secondaryText)
+                .font(.gloucester(size: 19))
+                .foregroundStyle(PigeonTheme.secondaryText)
             
             Spacer()
         }
@@ -122,27 +127,27 @@ struct OnboardingView: View {
             
             ZStack {
                 RoundedRectangle(cornerRadius: 20)
-                    .fill(FactumTheme.cardBackground)
+                    .fill(PigeonTheme.cardBackground)
                     .frame(width: 200, height: 160)
                 
                 VStack(spacing: 12) {
                     Image(systemName: "timelapse")
                         .font(.system(size: 48))
-                        .foregroundStyle(FactumTheme.accent)
+                        .foregroundStyle(PigeonTheme.accent)
                     
                     Text("2h 15m")
-                        .font(FactumTheme.font(20, weight: .bold))
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .font(PigeonTheme.font(20, weight: .bold))
+                        .foregroundStyle(PigeonTheme.primaryText)
                 }
             }
             
             Text("record the work")
-                .font(FactumTheme.titleFont)
-                .foregroundStyle(FactumTheme.primaryText)
+                .font(PigeonTheme.titleFont)
+                .foregroundStyle(PigeonTheme.primaryText)
             
             Text("your study sessions become\nshort timelapses — proof\nthat the hours happened")
-                .font(FactumTheme.bodyFont)
-                .foregroundStyle(FactumTheme.secondaryText)
+                .font(PigeonTheme.bodyFont)
+                .foregroundStyle(PigeonTheme.secondaryText)
                 .multilineTextAlignment(.center)
                 .lineSpacing(5)
             
@@ -172,23 +177,23 @@ struct OnboardingView: View {
                             .frame(width: 52, height: 52)
                             .overlay(
                                 Text(initial)
-                                    .font(FactumTheme.font(20, weight: .semibold))
+                                    .font(PigeonTheme.font(20, weight: .semibold))
                                     .foregroundStyle(.white)
                             )
                             .overlay(
-                                Circle().strokeBorder(FactumTheme.background, lineWidth: 3)
+                                Circle().strokeBorder(PigeonTheme.background, lineWidth: 3)
                             )
                     }
                 }
             }
             
             Text("study together")
-                .font(FactumTheme.titleFont)
-                .foregroundStyle(FactumTheme.primaryText)
+                .font(PigeonTheme.titleFont)
+                .foregroundStyle(PigeonTheme.primaryText)
             
             Text("see what your friends are\nworking on — it's easier to\nshow up when others do too")
-                .font(FactumTheme.bodyFont)
-                .foregroundStyle(FactumTheme.secondaryText)
+                .font(PigeonTheme.bodyFont)
+                .foregroundStyle(PigeonTheme.secondaryText)
                 .multilineTextAlignment(.center)
                 .lineSpacing(5)
             
@@ -205,21 +210,22 @@ struct OnboardingView: View {
     
     private var canSignUp: Bool {
         !displayName.isEmpty && !email.isEmpty && password.count >= 6 && passwordsMatch && !isSigningIn
+        && username.count >= 3 && usernameAvailable == true
     }
     
     private var getStartedPage: some View {
         ScrollView {
             VStack(spacing: 20) {
-                FactumIcon(size: 60, color: FactumTheme.primaryText)
+                PigeonIcon(size: 80, color: PigeonTheme.primaryText)
                     .padding(.top, 24)
                 
                 Text(isSignUpMode ? "create an account" : "ready when you are")
-                    .font(FactumTheme.titleFont)
-                    .foregroundStyle(FactumTheme.primaryText)
+                    .font(PigeonTheme.titleFont)
+                    .foregroundStyle(PigeonTheme.primaryText)
                 
                 Text(isSignUpMode ? "so your study sessions follow you" : "sign in to keep your work safe")
-                    .font(FactumTheme.bodyFont)
-                    .foregroundStyle(FactumTheme.secondaryText)
+                    .font(PigeonTheme.bodyFont)
+                    .foregroundStyle(PigeonTheme.secondaryText)
                 
                 // Sign In / Sign Up toggle
                 HStack(spacing: 0) {
@@ -231,11 +237,11 @@ struct OnboardingView: View {
                         }
                     } label: {
                         Text("Sign In")
-                            .font(FactumTheme.subheadlineFont)
-                            .foregroundStyle(isSignUpMode ? FactumTheme.secondaryText : FactumTheme.primaryText)
+                            .font(PigeonTheme.subheadlineFont)
+                            .foregroundStyle(isSignUpMode ? PigeonTheme.secondaryText : PigeonTheme.primaryText)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 10)
-                            .background(isSignUpMode ? Color.clear : FactumTheme.accent)
+                            .background(isSignUpMode ? Color.clear : PigeonTheme.accent)
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
                     
@@ -247,16 +253,16 @@ struct OnboardingView: View {
                         }
                     } label: {
                         Text("Sign Up")
-                            .font(FactumTheme.subheadlineFont)
-                            .foregroundStyle(isSignUpMode ? FactumTheme.primaryText : FactumTheme.secondaryText)
+                            .font(PigeonTheme.subheadlineFont)
+                            .foregroundStyle(isSignUpMode ? PigeonTheme.primaryText : PigeonTheme.secondaryText)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 10)
-                            .background(isSignUpMode ? FactumTheme.accent : Color.clear)
+                            .background(isSignUpMode ? PigeonTheme.accent : Color.clear)
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
                 }
                 .padding(4)
-                .background(FactumTheme.cardBackground)
+                .background(PigeonTheme.cardBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .padding(.horizontal, 24)
                 
@@ -264,61 +270,138 @@ struct OnboardingView: View {
                 VStack(spacing: 12) {
                     if isSignUpMode {
                         TextField("Display Name", text: $displayName)
-                            .font(FactumTheme.bodyFont)
-                            .foregroundStyle(FactumTheme.primaryText)
+                            .font(PigeonTheme.bodyFont)
+                            .foregroundStyle(PigeonTheme.primaryText)
                             .textContentType(.name)
                             .autocorrectionDisabled()
                             .focused($focusedField, equals: .name)
                             .padding(14)
-                            .background(FactumTheme.cardBackground)
+                            .background(PigeonTheme.cardBackground)
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                             .transition(.opacity.combined(with: .move(edge: .top)))
+                        
+                        // Username field
+                        HStack(spacing: 4) {
+                            Text("@")
+                                .font(PigeonTheme.bodyFont)
+                                .foregroundStyle(PigeonTheme.tertiaryText)
+                            TextField("username", text: $username)
+                                .font(PigeonTheme.bodyFont)
+                                .foregroundStyle(PigeonTheme.primaryText)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .onChange(of: username) { _, newValue in
+                                    let sanitized = newValue.lowercased().filter { $0.isLetter || $0.isNumber || $0 == "_" }
+                                    if sanitized != newValue { username = sanitized }
+                                    usernameAvailable = nil
+                                    usernameCheckTask?.cancel()
+                                    guard sanitized.count >= 3 else { return }
+                                    usernameCheckTask = Task {
+                                        isCheckingUsername = true
+                                        try? await Task.sleep(for: .milliseconds(400))
+                                        guard !Task.isCancelled else { return }
+                                        usernameAvailable = try? await SupabaseService.shared.isUsernameAvailable(sanitized)
+                                        isCheckingUsername = false
+                                    }
+                                }
+                        }
+                        .padding(14)
+                        .background(PigeonTheme.cardBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .strokeBorder(
+                                    usernameAvailable == true ? Color.green.opacity(0.5) :
+                                    usernameAvailable == false ? PigeonTheme.destructive.opacity(0.5) :
+                                    Color.clear,
+                                    lineWidth: 1.5
+                                )
+                        )
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                        
+                        if isCheckingUsername {
+                            HStack(spacing: 6) {
+                                ProgressView().scaleEffect(0.7)
+                                Text("Checking...")
+                                    .font(PigeonTheme.captionFont)
+                                    .foregroundStyle(PigeonTheme.tertiaryText)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .transition(.opacity)
+                        } else if let available = usernameAvailable {
+                            Text(available ? "Username available" : "Username taken")
+                                .font(PigeonTheme.captionFont)
+                                .foregroundStyle(available ? .green : PigeonTheme.destructive)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .transition(.opacity)
+                        }
                     }
                     
                     TextField("Email", text: $email)
-                        .font(FactumTheme.bodyFont)
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .font(PigeonTheme.bodyFont)
+                        .foregroundStyle(PigeonTheme.primaryText)
                         .keyboardType(.emailAddress)
                         .textContentType(.emailAddress)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .focused($focusedField, equals: .email)
                         .padding(14)
-                        .background(FactumTheme.cardBackground)
+                        .background(PigeonTheme.cardBackground)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                     
                     SecureField(isSignUpMode ? "Password (min 6 characters)" : "Password", text: $password)
-                        .font(FactumTheme.bodyFont)
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .font(PigeonTheme.bodyFont)
+                        .foregroundStyle(PigeonTheme.primaryText)
                         .textContentType(isSignUpMode ? .newPassword : .password)
                         .autocorrectionDisabled()
                         .focused($focusedField, equals: .password)
                         .padding(14)
-                        .background(FactumTheme.cardBackground)
+                        .background(PigeonTheme.cardBackground)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                     
                     if isSignUpMode {
                         SecureField("Confirm Password", text: $confirmPassword)
-                            .font(FactumTheme.bodyFont)
-                            .foregroundStyle(FactumTheme.primaryText)
+                            .font(PigeonTheme.bodyFont)
+                            .foregroundStyle(PigeonTheme.primaryText)
                             .textContentType(.newPassword)
                             .autocorrectionDisabled()
                             .focused($focusedField, equals: .confirm)
                             .padding(14)
-                            .background(FactumTheme.cardBackground)
+                            .background(PigeonTheme.cardBackground)
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                             .transition(.opacity.combined(with: .move(edge: .top)))
                         
                         if !confirmPassword.isEmpty && !passwordsMatch {
                             Text("Passwords don't match")
-                                .font(FactumTheme.captionFont)
-                                .foregroundStyle(FactumTheme.destructive)
+                                .font(PigeonTheme.captionFont)
+                                .foregroundStyle(PigeonTheme.destructive)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
+
+                        // Account privacy toggle
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Private Account")
+                                    .font(PigeonTheme.subheadlineFont)
+                                    .foregroundStyle(PigeonTheme.primaryText)
+                                Text(isPrivateAccount
+                                     ? "Only friends can see your sessions"
+                                     : "Anyone can see your sessions in the feed")
+                                    .font(PigeonTheme.smallFont)
+                                    .foregroundStyle(PigeonTheme.tertiaryText)
+                            }
+                            Spacer()
+                            Toggle("", isOn: $isPrivateAccount)
+                                .labelsHidden()
+                                .tint(PigeonTheme.accent)
+                        }
+                        .padding(14)
+                        .background(PigeonTheme.cardBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
                 }
                 .padding(.horizontal, 24)
-                
+
                 // Primary action button
                 if isSignUpMode {
                     Button {
@@ -329,15 +412,15 @@ struct OnboardingView: View {
                         HStack(spacing: 12) {
                             if isSigningIn {
                                 ProgressView()
-                                    .tint(FactumTheme.accentText)
+                                    .tint(PigeonTheme.accentText)
                             }
                             Text("Create Account")
-                                .font(FactumTheme.subheadlineFont)
+                                .font(PigeonTheme.subheadlineFont)
                         }
-                        .foregroundStyle(FactumTheme.accentText)
+                        .foregroundStyle(PigeonTheme.accentText)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
-                        .background(canSignUp ? FactumTheme.accent : FactumTheme.elevated)
+                        .background(canSignUp ? PigeonTheme.accent : PigeonTheme.elevated)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
                     .disabled(!canSignUp)
@@ -351,21 +434,21 @@ struct OnboardingView: View {
                         HStack(spacing: 12) {
                             if isSigningIn {
                                 ProgressView()
-                                    .tint(FactumTheme.accentText)
+                                    .tint(PigeonTheme.accentText)
                             } else {
                                 Image(systemName: "envelope.fill")
                                     .font(.system(size: 18))
                             }
                             Text("Sign In")
-                                .font(FactumTheme.subheadlineFont)
+                                .font(PigeonTheme.subheadlineFont)
                         }
-                        .foregroundStyle(FactumTheme.accentText)
+                        .foregroundStyle(PigeonTheme.accentText)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
                         .background(
                             (email.isEmpty || password.isEmpty || isSigningIn)
-                            ? FactumTheme.elevated
-                            : FactumTheme.accent
+                            ? PigeonTheme.elevated
+                            : PigeonTheme.accent
                         )
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
@@ -376,13 +459,13 @@ struct OnboardingView: View {
                 // Divider
                 HStack {
                     Rectangle()
-                        .fill(FactumTheme.separator)
+                        .fill(PigeonTheme.separator)
                         .frame(height: 1)
                     Text("or")
-                        .font(FactumTheme.captionFont)
-                        .foregroundStyle(FactumTheme.tertiaryText)
+                        .font(PigeonTheme.captionFont)
+                        .foregroundStyle(PigeonTheme.tertiaryText)
                     Rectangle()
-                        .fill(FactumTheme.separator)
+                        .fill(PigeonTheme.separator)
                         .frame(height: 1)
                 }
                 .padding(.horizontal, 24)
@@ -400,16 +483,16 @@ struct OnboardingView: View {
                     HStack(spacing: 12) {
                         GoogleGLogo(size: 20)
                         Text(isSignUpMode ? "Sign up with Google" : "Sign in with Google")
-                            .font(FactumTheme.subheadlineFont)
+                            .font(PigeonTheme.subheadlineFont)
                     }
-                    .foregroundStyle(FactumTheme.primaryText)
+                    .foregroundStyle(PigeonTheme.primaryText)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
-                    .background(FactumTheme.cardBackground)
+                    .background(PigeonTheme.cardBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
-                            .strokeBorder(FactumTheme.separator, lineWidth: 1)
+                            .strokeBorder(PigeonTheme.separator, lineWidth: 1)
                     )
                 }
                 .disabled(isSigningIn)
@@ -417,8 +500,8 @@ struct OnboardingView: View {
                 
                 if let signInError {
                     Text(signInError)
-                        .font(FactumTheme.captionFont)
-                        .foregroundStyle(FactumTheme.destructive)
+                        .font(PigeonTheme.captionFont)
+                        .foregroundStyle(PigeonTheme.destructive)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 24)
                 }
@@ -429,12 +512,12 @@ struct OnboardingView: View {
                             .font(.system(size: 32))
                             .foregroundStyle(.green)
                         Text("Account created! You're all set.")
-                            .font(FactumTheme.bodyFont)
-                            .foregroundStyle(FactumTheme.primaryText)
+                            .font(PigeonTheme.bodyFont)
+                            .foregroundStyle(PigeonTheme.primaryText)
                             .multilineTextAlignment(.center)
                     }
                     .padding(16)
-                    .background(FactumTheme.cardBackground)
+                    .background(PigeonTheme.cardBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .padding(.horizontal, 24)
                 }
@@ -443,7 +526,7 @@ struct OnboardingView: View {
                 HStack(spacing: 8) {
                     ForEach(0..<4, id: \.self) { index in
                         RoundedRectangle(cornerRadius: 3)
-                            .fill(index == currentPage ? FactumTheme.accent : FactumTheme.elevated)
+                            .fill(index == currentPage ? PigeonTheme.accent : PigeonTheme.elevated)
                             .frame(width: index == currentPage ? 24 : 8, height: 8)
                     }
                 }
@@ -524,6 +607,18 @@ struct OnboardingView: View {
                 try await AuthService.shared.signInWithEmail(email: email, password: password)
             }
             createLocalUserIfNeeded()
+            
+            // Claim the username
+            if !username.isEmpty {
+                let uid = AuthService.shared.currentUserID
+                let claimed = try await SupabaseService.shared.claimUsername(username, forUser: uid)
+                if claimed {
+                    let descriptor = FetchDescriptor<UserProfile>(predicate: #Predicate { $0.firebaseUID == uid })
+                    if let profile = try? modelContext.fetch(descriptor).first {
+                        profile.username = username.lowercased()
+                    }
+                }
+            }
         } catch {
             signInError = error.localizedDescription
         }
@@ -559,7 +654,8 @@ struct OnboardingView: View {
             email: supabaseUser?.email ?? "",
             firebaseUID: uid,
             avatarURL: supabaseUser?.userMetadata["avatar_url"]?.stringValue,
-            bio: ""
+            bio: "",
+            isPrivate: isPrivateAccount
         )
         modelContext.insert(profile)
     }
@@ -571,17 +667,22 @@ struct SignUpView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @State private var displayName = ""
+    @State private var username = ""
+    @State private var usernameAvailable: Bool? = nil
+    @State private var isCheckingUsername = false
+    @State private var usernameCheckTask: Task<Void, Never>?
     @State private var email = ""
     @State private var password = ""
     @State private var confirmPassword = ""
     @State private var isSigningUp = false
     @State private var signUpError: String?
     @State private var signUpSuccess = false
+    @State private var isPrivateAccount = true
     @FocusState private var focusedField: Field?
     let onComplete: () -> Void
-    
+
     private enum Field {
-        case name, email, password, confirm
+        case name, username, email, password, confirm
     }
     
     private var passwordsMatch: Bool {
@@ -590,6 +691,7 @@ struct SignUpView: View {
     
     private var canSubmit: Bool {
         !displayName.isEmpty && !email.isEmpty && password.count >= 6 && passwordsMatch && !isSigningUp
+        && username.count >= 3 && usernameAvailable == true
     }
     
     var body: some View {
@@ -598,15 +700,15 @@ struct SignUpView: View {
                 VStack(spacing: 24) {
                     // Header
                     VStack(spacing: 8) {
-                        FactumIcon(size: 60, color: FactumTheme.primaryText)
+                        PigeonIcon(size: 80, color: PigeonTheme.primaryText)
                         
                         Text("create an account")
-                            .font(FactumTheme.titleFont)
-                            .foregroundStyle(FactumTheme.primaryText)
+                            .font(PigeonTheme.titleFont)
+                            .foregroundStyle(PigeonTheme.primaryText)
                         
                         Text("so your study sessions\nfollow you everywhere")
-                            .font(FactumTheme.bodyFont)
-                            .foregroundStyle(FactumTheme.secondaryText)
+                            .font(PigeonTheme.bodyFont)
+                            .foregroundStyle(PigeonTheme.secondaryText)
                             .multilineTextAlignment(.center)
                     }
                     .padding(.top, 16)
@@ -614,54 +716,129 @@ struct SignUpView: View {
                     // Form fields
                     VStack(spacing: 12) {
                         TextField("Display Name", text: $displayName)
-                            .font(FactumTheme.bodyFont)
-                            .foregroundStyle(FactumTheme.primaryText)
+                            .font(PigeonTheme.bodyFont)
+                            .foregroundStyle(PigeonTheme.primaryText)
                             .textContentType(.init(rawValue: ""))
                             .focused($focusedField, equals: .name)
                             .padding(14)
-                            .background(FactumTheme.cardBackground)
+                            .background(PigeonTheme.cardBackground)
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                         
+                        // Username field
+                        HStack(spacing: 4) {
+                            Text("@")
+                                .font(PigeonTheme.bodyFont)
+                                .foregroundStyle(PigeonTheme.tertiaryText)
+                            TextField("username", text: $username)
+                                .font(PigeonTheme.bodyFont)
+                                .foregroundStyle(PigeonTheme.primaryText)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .focused($focusedField, equals: .username)
+                                .onChange(of: username) { _, newValue in
+                                    let sanitized = newValue.lowercased().filter { $0.isLetter || $0.isNumber || $0 == "_" }
+                                    if sanitized != newValue { username = sanitized }
+                                    usernameAvailable = nil
+                                    usernameCheckTask?.cancel()
+                                    guard sanitized.count >= 3 else { return }
+                                    usernameCheckTask = Task {
+                                        isCheckingUsername = true
+                                        try? await Task.sleep(for: .milliseconds(400))
+                                        guard !Task.isCancelled else { return }
+                                        usernameAvailable = try? await SupabaseService.shared.isUsernameAvailable(sanitized)
+                                        isCheckingUsername = false
+                                    }
+                                }
+                        }
+                        .padding(14)
+                        .background(PigeonTheme.cardBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .strokeBorder(
+                                    usernameAvailable == true ? Color.green.opacity(0.5) :
+                                    usernameAvailable == false ? PigeonTheme.destructive.opacity(0.5) :
+                                    Color.clear,
+                                    lineWidth: 1.5
+                                )
+                        )
+                        
+                        if isCheckingUsername {
+                            HStack(spacing: 6) {
+                                ProgressView().scaleEffect(0.7)
+                                Text("Checking...")
+                                    .font(PigeonTheme.captionFont)
+                                    .foregroundStyle(PigeonTheme.tertiaryText)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        } else if let available = usernameAvailable {
+                            Text(available ? "Username available" : "Username taken")
+                                .font(PigeonTheme.captionFont)
+                                .foregroundStyle(available ? .green : PigeonTheme.destructive)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        
                         TextField("Email", text: $email)
-                            .font(FactumTheme.bodyFont)
-                            .foregroundStyle(FactumTheme.primaryText)
+                            .font(PigeonTheme.bodyFont)
+                            .foregroundStyle(PigeonTheme.primaryText)
                             .keyboardType(.emailAddress)
                             .textContentType(.init(rawValue: ""))
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .focused($focusedField, equals: .email)
                             .padding(14)
-                            .background(FactumTheme.cardBackground)
+                            .background(PigeonTheme.cardBackground)
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                         
                         SecureField("Password (min 6 characters)", text: $password)
-                            .font(FactumTheme.bodyFont)
-                            .foregroundStyle(FactumTheme.primaryText)
+                            .font(PigeonTheme.bodyFont)
+                            .foregroundStyle(PigeonTheme.primaryText)
                             .textContentType(.init(rawValue: ""))
                             .focused($focusedField, equals: .password)
                             .padding(14)
-                            .background(FactumTheme.cardBackground)
+                            .background(PigeonTheme.cardBackground)
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                         
                         SecureField("Confirm Password", text: $confirmPassword)
-                            .font(FactumTheme.bodyFont)
-                            .foregroundStyle(FactumTheme.primaryText)
+                            .font(PigeonTheme.bodyFont)
+                            .foregroundStyle(PigeonTheme.primaryText)
                             .textContentType(.init(rawValue: ""))
                             .focused($focusedField, equals: .confirm)
                             .padding(14)
-                            .background(FactumTheme.cardBackground)
+                            .background(PigeonTheme.cardBackground)
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                         
                         // Password mismatch indicator
                         if !confirmPassword.isEmpty && !passwordsMatch {
                             Text("Passwords don't match")
-                                .font(FactumTheme.captionFont)
-                                .foregroundStyle(FactumTheme.destructive)
+                                .font(PigeonTheme.captionFont)
+                                .foregroundStyle(PigeonTheme.destructive)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
+
+                        // Account privacy toggle
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Private Account")
+                                    .font(PigeonTheme.subheadlineFont)
+                                    .foregroundStyle(PigeonTheme.primaryText)
+                                Text(isPrivateAccount
+                                     ? "Only friends can see your sessions"
+                                     : "Anyone can see your sessions in the feed")
+                                    .font(PigeonTheme.smallFont)
+                                    .foregroundStyle(PigeonTheme.tertiaryText)
+                            }
+                            Spacer()
+                            Toggle("", isOn: $isPrivateAccount)
+                                .labelsHidden()
+                                .tint(PigeonTheme.accent)
+                        }
+                        .padding(14)
+                        .background(PigeonTheme.cardBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
                     .padding(.horizontal, 24)
-                    
+
                     // Sign up button
                     Button {
                         focusedField = nil
@@ -670,15 +847,15 @@ struct SignUpView: View {
                         HStack(spacing: 12) {
                             if isSigningUp {
                                 ProgressView()
-                                    .tint(FactumTheme.accentText)
+                                    .tint(PigeonTheme.accentText)
                             }
                             Text("Create Account")
-                                .font(FactumTheme.subheadlineFont)
+                                .font(PigeonTheme.subheadlineFont)
                         }
-                        .foregroundStyle(FactumTheme.accentText)
+                        .foregroundStyle(PigeonTheme.accentText)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 16)
-                        .background(canSubmit ? FactumTheme.accent : FactumTheme.elevated)
+                        .background(canSubmit ? PigeonTheme.accent : PigeonTheme.elevated)
                         .clipShape(RoundedRectangle(cornerRadius: 14))
                     }
                     .disabled(!canSubmit)
@@ -686,8 +863,8 @@ struct SignUpView: View {
                     
                     if let signUpError {
                         Text(signUpError)
-                            .font(FactumTheme.captionFont)
-                            .foregroundStyle(FactumTheme.destructive)
+                            .font(PigeonTheme.captionFont)
+                            .foregroundStyle(PigeonTheme.destructive)
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 24)
                     }
@@ -698,19 +875,19 @@ struct SignUpView: View {
                                 .font(.system(size: 32))
                                 .foregroundStyle(.green)
                             Text("Account created! You're all set.")
-                                .font(FactumTheme.bodyFont)
-                                .foregroundStyle(FactumTheme.primaryText)
+                                .font(PigeonTheme.bodyFont)
+                                .foregroundStyle(PigeonTheme.primaryText)
                                 .multilineTextAlignment(.center)
                         }
                         .padding(16)
-                        .background(FactumTheme.cardBackground)
+                        .background(PigeonTheme.cardBackground)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                         .padding(.horizontal, 24)
                     }
                 }
                 .padding(.bottom, 32)
             }
-            .background(FactumTheme.background)
+            .background(PigeonTheme.background)
             .onTapGesture {
                 focusedField = nil
             }
@@ -718,14 +895,14 @@ struct SignUpView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
-                        .foregroundStyle(FactumTheme.secondaryText)
-                        .font(FactumTheme.bodyFont)
+                        .foregroundStyle(PigeonTheme.secondaryText)
+                        .font(PigeonTheme.bodyFont)
                 }
             }
-            .toolbarBackground(FactumTheme.background, for: .navigationBar)
+            .toolbarBackground(PigeonTheme.background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
         }
-        .presentationBackground(FactumTheme.background)
+        .presentationBackground(PigeonTheme.background)
     }
     
     @MainActor
@@ -745,6 +922,19 @@ struct SignUpView: View {
                 try await AuthService.shared.signInWithEmail(email: email, password: password)
             }
             createLocalUserIfNeeded()
+            
+            // Claim the username
+            if !username.isEmpty {
+                let uid = AuthService.shared.currentUserID
+                let claimed = try await SupabaseService.shared.claimUsername(username, forUser: uid)
+                if claimed {
+                    let descriptor = FetchDescriptor<UserProfile>(predicate: #Predicate { $0.firebaseUID == uid })
+                    if let profile = try? modelContext.fetch(descriptor).first {
+                        profile.username = username.lowercased()
+                    }
+                }
+            }
+            
             dismiss()
             onComplete()
         } catch {
@@ -766,8 +956,10 @@ struct SignUpView: View {
             displayName: displayName,
             email: email,
             firebaseUID: uid,
+            username: username.lowercased(),
             avatarURL: nil,
-            bio: ""
+            bio: "",
+            isPrivate: isPrivateAccount
         )
         modelContext.insert(profile)
     }
@@ -794,8 +986,13 @@ struct GoogleProfileSetupView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var users: [UserProfile]
     @State private var editedName = ""
+    @State private var username = ""
+    @State private var usernameAvailable: Bool? = nil
+    @State private var isCheckingUsername = false
+    @State private var usernameCheckTask: Task<Void, Never>?
     @State private var isSaving = false
-    
+    @State private var isPrivateAccount = true
+
     private var currentUser: UserProfile? {
         let uid = AuthService.shared.currentUserID
         return users.first { $0.firebaseUID == uid }
@@ -811,53 +1008,141 @@ struct GoogleProfileSetupView: View {
                     avatarView(name: currentUser.displayName, size: 80, avatarURL: currentUser.avatarURL)
                 }
                 
-                Text("welcome to factum")
-                    .font(FactumTheme.titleFont)
-                    .foregroundStyle(FactumTheme.primaryText)
+                Text("welcome to pigeon")
+                    .font(PigeonTheme.titleFont)
+                    .foregroundStyle(PigeonTheme.primaryText)
                 
-                Text("set your display name")
-                    .font(FactumTheme.bodyFont)
-                    .foregroundStyle(FactumTheme.secondaryText)
+                Text("set your name & username")
+                    .font(PigeonTheme.bodyFont)
+                    .foregroundStyle(PigeonTheme.secondaryText)
                 
-                TextField("Display Name", text: $editedName)
-                    .font(FactumTheme.bodyFont)
-                    .foregroundStyle(FactumTheme.primaryText)
-                    .textContentType(.name)
-                    .autocorrectionDisabled()
+                VStack(spacing: 12) {
+                    TextField("Display Name", text: $editedName)
+                        .font(PigeonTheme.bodyFont)
+                        .foregroundStyle(PigeonTheme.primaryText)
+                        .textContentType(.name)
+                        .autocorrectionDisabled()
+                        .padding(14)
+                        .background(PigeonTheme.cardBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    
+                    HStack(spacing: 4) {
+                        Text("@")
+                            .font(PigeonTheme.bodyFont)
+                            .foregroundStyle(PigeonTheme.tertiaryText)
+                        TextField("username", text: $username)
+                            .font(PigeonTheme.bodyFont)
+                            .foregroundStyle(PigeonTheme.primaryText)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .onChange(of: username) { _, newValue in
+                                let sanitized = newValue.lowercased().filter { $0.isLetter || $0.isNumber || $0 == "_" }
+                                if sanitized != newValue { username = sanitized }
+                                usernameAvailable = nil
+                                usernameCheckTask?.cancel()
+                                guard sanitized.count >= 3 else { return }
+                                usernameCheckTask = Task {
+                                    isCheckingUsername = true
+                                    try? await Task.sleep(for: .milliseconds(400))
+                                    guard !Task.isCancelled else { return }
+                                    usernameAvailable = try? await SupabaseService.shared.isUsernameAvailable(sanitized)
+                                    isCheckingUsername = false
+                                }
+                            }
+                    }
                     .padding(14)
-                    .background(FactumTheme.cardBackground)
+                    .background(PigeonTheme.cardBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .padding(.horizontal, 24)
-                
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .strokeBorder(
+                                usernameAvailable == true ? Color.green.opacity(0.5) :
+                                usernameAvailable == false ? PigeonTheme.destructive.opacity(0.5) :
+                                Color.clear,
+                                lineWidth: 1.5
+                            )
+                    )
+                    
+                    if isCheckingUsername {
+                        HStack(spacing: 6) {
+                            ProgressView().scaleEffect(0.7)
+                            Text("Checking...")
+                                .font(PigeonTheme.captionFont)
+                                .foregroundStyle(PigeonTheme.tertiaryText)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    } else if let available = usernameAvailable {
+                        Text(available ? "Username available" : "Username taken")
+                            .font(PigeonTheme.captionFont)
+                            .foregroundStyle(available ? .green : PigeonTheme.destructive)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    // Account privacy toggle
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Private Account")
+                                .font(PigeonTheme.subheadlineFont)
+                                .foregroundStyle(PigeonTheme.primaryText)
+                            Text(isPrivateAccount
+                                 ? "Only friends can see your sessions"
+                                 : "Anyone can see your sessions in the feed")
+                                .font(PigeonTheme.smallFont)
+                                .foregroundStyle(PigeonTheme.tertiaryText)
+                        }
+                        Spacer()
+                        Toggle("", isOn: $isPrivateAccount)
+                            .labelsHidden()
+                            .tint(PigeonTheme.accent)
+                    }
+                    .padding(14)
+                    .background(PigeonTheme.cardBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
+                .padding(.horizontal, 24)
+
                 Button {
+                    isSaving = true
                     let trimmed = editedName.trimmingCharacters(in: .whitespaces)
                     if !trimmed.isEmpty {
                         currentUser?.displayName = trimmed
                     }
-                    dismiss()
+                    currentUser?.isPrivate = isPrivateAccount
+                    Task {
+                        if username.count >= 3, usernameAvailable == true {
+                            let uid = AuthService.shared.currentUserID
+                            let claimed = try? await SupabaseService.shared.claimUsername(username, forUser: uid)
+                            if claimed == true {
+                                currentUser?.username = username.lowercased()
+                            }
+                        }
+                        isSaving = false
+                        dismiss()
+                    }
                 } label: {
-                    Text("Continue")
-                        .font(FactumTheme.subheadlineFont)
-                        .foregroundStyle(FactumTheme.accentText)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(FactumTheme.accent)
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                    HStack(spacing: 8) {
+                        if isSaving { ProgressView().tint(PigeonTheme.accentText) }
+                        Text("Continue")
+                            .font(PigeonTheme.subheadlineFont)
+                    }
+                    .foregroundStyle(PigeonTheme.accentText)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+                    .background(
+                        (isSaving || username.count < 3 || usernameAvailable != true)
+                        ? PigeonTheme.elevated : PigeonTheme.accent
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
                 }
+                .disabled(isSaving || username.count < 3 || usernameAvailable != true)
                 .padding(.horizontal, 24)
-                
-                Button("Skip") {
-                    dismiss()
-                }
-                .font(FactumTheme.captionFont)
-                .foregroundStyle(FactumTheme.tertiaryText)
                 
                 Spacer()
             }
-            .background(FactumTheme.background)
+            .background(PigeonTheme.background)
             .toolbar(.hidden, for: .navigationBar)
         }
-        .presentationBackground(FactumTheme.background)
+        .presentationBackground(PigeonTheme.background)
         .onAppear {
             editedName = currentUser?.displayName ?? ""
         }
@@ -866,5 +1151,5 @@ struct GoogleProfileSetupView: View {
 
 #Preview {
     OnboardingView { }
-        .modelContainer(for: [UserProfile.self, StudyTimelapse.self, TimelapseComment.self, StudyGroup.self, StudySubject.self], inMemory: true)
+        .modelContainer(for: [UserProfile.self, StudyTimelapse.self, StudyGroup.self, StudySubject.self], inMemory: true)
 }

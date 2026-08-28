@@ -1,6 +1,6 @@
 //
 //  ManageSubjectsView.swift
-//  Factum
+//  Pigeon
 //
 //  CRUD interface for managing study subjects and their colors
 //
@@ -55,7 +55,7 @@ struct ManageSubjectsView: View {
                                 } label: {
                                     Label("Edit", systemImage: "pencil")
                                 }
-                                .tint(FactumTheme.accent)
+                                .tint(PigeonTheme.accent)
                             }
                     }
                     
@@ -66,34 +66,34 @@ struct ManageSubjectsView: View {
                         HStack(spacing: 10) {
                             Image(systemName: "plus.circle.fill")
                                 .font(.system(size: 20))
-                                .foregroundStyle(FactumTheme.accent)
+                                .foregroundStyle(PigeonTheme.accent)
                             Text("Add Subject")
-                                .font(FactumTheme.bodyFont)
-                                .foregroundStyle(FactumTheme.accent)
+                                .font(PigeonTheme.bodyFont)
+                                .foregroundStyle(PigeonTheme.accent)
                         }
                     }
                 } header: {
                     Text("Subjects")
-                        .font(FactumTheme.smallFont)
-                        .foregroundStyle(FactumTheme.secondaryText)
+                        .font(PigeonTheme.smallFont)
+                        .foregroundStyle(PigeonTheme.secondaryText)
                 }
             }
             .scrollContentBackground(.hidden)
-            .background(FactumTheme.background)
+            .background(PigeonTheme.background)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     Text("Manage Subjects")
-                        .font(FactumTheme.headlineFont)
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .font(PigeonTheme.headlineFont)
+                        .foregroundStyle(PigeonTheme.primaryText)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
-                        .foregroundStyle(FactumTheme.accent)
-                        .font(FactumTheme.bodyFont)
+                        .foregroundStyle(PigeonTheme.accent)
+                        .font(PigeonTheme.bodyFont)
                 }
             }
-            .toolbarBackground(FactumTheme.background, for: .navigationBar)
+            .toolbarBackground(PigeonTheme.background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
             .sheet(isPresented: $showAddSubject) {
                 AddSubjectView()
@@ -105,7 +105,7 @@ struct ManageSubjectsView: View {
                 deduplicateSubjects()
             }
         }
-        .presentationBackground(FactumTheme.background)
+        .presentationBackground(PigeonTheme.background)
     }
     
     private func deleteSubject(_ subject: StudySubject) {
@@ -150,12 +150,12 @@ struct ManageSubjectsView: View {
                 .frame(width: 14, height: 14)
             
             Text(subject.name)
-                .font(FactumTheme.bodyFont)
-                .foregroundStyle(FactumTheme.primaryText)
+                .font(PigeonTheme.bodyFont)
+                .foregroundStyle(PigeonTheme.primaryText)
             
             Spacer()
         }
-        .listRowBackground(FactumTheme.cardBackground)
+        .listRowBackground(PigeonTheme.cardBackground)
     }
 }
 
@@ -190,22 +190,22 @@ struct EditSubjectView: View {
                 // Name
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Subject Name")
-                        .font(FactumTheme.subheadlineFont)
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .font(PigeonTheme.subheadlineFont)
+                        .foregroundStyle(PigeonTheme.primaryText)
                     
                     TextField("e.g. Economics", text: $name)
-                        .font(FactumTheme.bodyFont)
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .font(PigeonTheme.bodyFont)
+                        .foregroundStyle(PigeonTheme.primaryText)
                         .padding(14)
-                        .background(FactumTheme.cardBackground)
+                        .background(PigeonTheme.cardBackground)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
                 
                 // Color selection
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Color")
-                        .font(FactumTheme.subheadlineFont)
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .font(PigeonTheme.subheadlineFont)
+                        .foregroundStyle(PigeonTheme.primaryText)
                     
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 6), spacing: 12) {
                         ForEach(presetColors, id: \.0) { colorName, color in
@@ -227,8 +227,8 @@ struct EditSubjectView: View {
                     // Custom color picker
                     HStack(spacing: 12) {
                         Text("Custom")
-                            .font(FactumTheme.captionFont)
-                            .foregroundStyle(FactumTheme.secondaryText)
+                            .font(PigeonTheme.captionFont)
+                            .foregroundStyle(PigeonTheme.secondaryText)
                         ColorPicker("", selection: $selectedColor, supportsOpacity: false)
                             .labelsHidden()
                     }
@@ -240,12 +240,12 @@ struct EditSubjectView: View {
                         .fill(selectedColor)
                         .frame(width: 14, height: 14)
                     Text(name.isEmpty ? "Preview" : name)
-                        .font(FactumTheme.bodyFont)
-                        .foregroundStyle(name.isEmpty ? FactumTheme.tertiaryText : FactumTheme.primaryText)
+                        .font(PigeonTheme.bodyFont)
+                        .foregroundStyle(name.isEmpty ? PigeonTheme.tertiaryText : PigeonTheme.primaryText)
                 }
                 .padding(14)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(FactumTheme.cardBackground)
+                .background(PigeonTheme.cardBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 
                 Spacer()
@@ -288,21 +288,21 @@ struct EditSubjectView: View {
                     dismiss()
                 } label: {
                     Text("Save Changes")
-                        .font(FactumTheme.subheadlineFont)
-                        .foregroundStyle(FactumTheme.accentText)
+                        .font(PigeonTheme.subheadlineFont)
+                        .foregroundStyle(PigeonTheme.accentText)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 16)
                         .background(
                             name.trimmingCharacters(in: .whitespaces).isEmpty
-                            ? FactumTheme.elevated
-                            : FactumTheme.accent
+                            ? PigeonTheme.elevated
+                            : PigeonTheme.accent
                         )
                         .clipShape(RoundedRectangle(cornerRadius: 14))
                 }
                 .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
             }
             .padding(16)
-            .background(FactumTheme.background)
+            .background(PigeonTheme.background)
             .onTapGesture {
                 UIApplication.shared.sendAction(
                     #selector(UIResponder.resignFirstResponder),
@@ -313,23 +313,23 @@ struct EditSubjectView: View {
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     Text("Edit Subject")
-                        .font(FactumTheme.headlineFont)
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .font(PigeonTheme.headlineFont)
+                        .foregroundStyle(PigeonTheme.primaryText)
                 }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
-                        .foregroundStyle(FactumTheme.accent)
-                        .font(FactumTheme.bodyFont)
+                        .foregroundStyle(PigeonTheme.accent)
+                        .font(PigeonTheme.bodyFont)
                 }
             }
-            .toolbarBackground(FactumTheme.background, for: .navigationBar)
+            .toolbarBackground(PigeonTheme.background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
             .onAppear {
                 name = subject.name
                 selectedColor = subject.color
             }
         }
-        .presentationBackground(FactumTheme.background)
+        .presentationBackground(PigeonTheme.background)
     }
     
     private func syncSubjectsToCloud() {
@@ -372,22 +372,22 @@ struct AddSubjectView: View {
                 // Name
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Subject Name")
-                        .font(FactumTheme.subheadlineFont)
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .font(PigeonTheme.subheadlineFont)
+                        .foregroundStyle(PigeonTheme.primaryText)
                     
                     TextField("e.g. Economics", text: $name)
-                        .font(FactumTheme.bodyFont)
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .font(PigeonTheme.bodyFont)
+                        .foregroundStyle(PigeonTheme.primaryText)
                         .padding(14)
-                        .background(FactumTheme.cardBackground)
+                        .background(PigeonTheme.cardBackground)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
                 
                 // Color selection
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Color")
-                        .font(FactumTheme.subheadlineFont)
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .font(PigeonTheme.subheadlineFont)
+                        .foregroundStyle(PigeonTheme.primaryText)
                     
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 6), spacing: 12) {
                         ForEach(presetColors, id: \.0) { colorName, color in
@@ -409,8 +409,8 @@ struct AddSubjectView: View {
                     // Custom color picker
                     HStack(spacing: 12) {
                         Text("Custom")
-                            .font(FactumTheme.captionFont)
-                            .foregroundStyle(FactumTheme.secondaryText)
+                            .font(PigeonTheme.captionFont)
+                            .foregroundStyle(PigeonTheme.secondaryText)
                         ColorPicker("", selection: $selectedColor, supportsOpacity: false)
                             .labelsHidden()
                     }
@@ -422,12 +422,12 @@ struct AddSubjectView: View {
                         .fill(selectedColor)
                         .frame(width: 14, height: 14)
                     Text(name.isEmpty ? "Preview" : name)
-                        .font(FactumTheme.bodyFont)
-                        .foregroundStyle(name.isEmpty ? FactumTheme.tertiaryText : FactumTheme.primaryText)
+                        .font(PigeonTheme.bodyFont)
+                        .foregroundStyle(name.isEmpty ? PigeonTheme.tertiaryText : PigeonTheme.primaryText)
                 }
                 .padding(14)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(FactumTheme.cardBackground)
+                .background(PigeonTheme.cardBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 
                 Spacer()
@@ -448,21 +448,21 @@ struct AddSubjectView: View {
                     dismiss()
                 } label: {
                     Text("Add Subject")
-                        .font(FactumTheme.subheadlineFont)
-                        .foregroundStyle(FactumTheme.accentText)
+                        .font(PigeonTheme.subheadlineFont)
+                        .foregroundStyle(PigeonTheme.accentText)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 16)
                         .background(
                             name.trimmingCharacters(in: .whitespaces).isEmpty
-                            ? FactumTheme.elevated
-                            : FactumTheme.accent
+                            ? PigeonTheme.elevated
+                            : PigeonTheme.accent
                         )
                         .clipShape(RoundedRectangle(cornerRadius: 14))
                 }
                 .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
             }
             .padding(16)
-            .background(FactumTheme.background)
+            .background(PigeonTheme.background)
             .onTapGesture {
                 UIApplication.shared.sendAction(
                     #selector(UIResponder.resignFirstResponder),
@@ -473,19 +473,19 @@ struct AddSubjectView: View {
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     Text("New Subject")
-                        .font(FactumTheme.headlineFont)
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .font(PigeonTheme.headlineFont)
+                        .foregroundStyle(PigeonTheme.primaryText)
                 }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
-                        .foregroundStyle(FactumTheme.accent)
-                        .font(FactumTheme.bodyFont)
+                        .foregroundStyle(PigeonTheme.accent)
+                        .font(PigeonTheme.bodyFont)
                 }
             }
-            .toolbarBackground(FactumTheme.background, for: .navigationBar)
+            .toolbarBackground(PigeonTheme.background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
         }
-        .presentationBackground(FactumTheme.background)
+        .presentationBackground(PigeonTheme.background)
     }
     
     private func syncSubjectsToCloud() {

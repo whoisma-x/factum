@@ -1,6 +1,6 @@
 //
 //  ProfileView.swift
-//  Factum
+//  Pigeon
 //
 //  User profile view with stats and Google sign-in
 //
@@ -35,27 +35,27 @@ struct ProfileView: View {
                     // Scrollable title row
                     HStack {
                         Text("Profile")
-                            .font(FactumTheme.titleFont)
-                            .foregroundStyle(FactumTheme.primaryText)
+                            .font(PigeonTheme.titleFont)
+                            .foregroundStyle(PigeonTheme.primaryText)
                         Spacer()
                         Button {
                             showSettings = true
                         } label: {
                             Image(systemName: "gearshape")
                                 .font(.system(size: 20, weight: .light))
-                                .foregroundStyle(FactumTheme.secondaryText)
+                                .foregroundStyle(PigeonTheme.secondaryText)
                                 .frame(width: 44, height: 44)
                         }
                     }
-                    .padding(.top, FactumTheme.spacing8)
-                    .padding(.bottom, FactumTheme.spacing4)
+                    .padding(.top, PigeonTheme.spacing12)
+                    .padding(.bottom, PigeonTheme.spacing8)
                     
                     if let user = currentUser {
                         profileHeader(user: user)
-                            .padding(.bottom, FactumTheme.spacing16)
+                            .padding(.bottom, PigeonTheme.spacing16)
                         
                         statsGrid(user: user)
-                            .padding(.bottom, FactumTheme.spacing12)
+                            .padding(.bottom, PigeonTheme.spacing12)
                         
                         // Detailed stats link
                         NavigationLink {
@@ -63,19 +63,19 @@ struct ProfileView: View {
                         } label: {
                             HStack {
                                 Image(systemName: "chart.bar.fill")
-                                    .foregroundStyle(FactumTheme.secondaryText)
+                                    .foregroundStyle(PigeonTheme.secondaryText)
                                 Text("View Detailed Stats")
-                                    .font(FactumTheme.subheadlineFont)
-                                    .foregroundStyle(FactumTheme.primaryText)
+                                    .font(PigeonTheme.subheadlineFont)
+                                    .foregroundStyle(PigeonTheme.primaryText)
                                 Spacer()
                                 Image(systemName: "chevron.right")
                                     .font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(FactumTheme.tertiaryText)
+                                    .foregroundStyle(PigeonTheme.tertiaryText)
                             }
-                            .padding(FactumTheme.spacing16)
-                            .background(FactumTheme.cardBackground)
-                            .clipShape(OrganicRect(base: FactumTheme.cornerCard))
-                            .shadow(color: FactumTheme.cardShadow, radius: FactumTheme.cardShadowRadius, x: 0, y: FactumTheme.cardShadowY)
+                            .padding(PigeonTheme.spacing16)
+                            .background(PigeonTheme.cardBackground)
+                            .clipShape(OrganicRect(base: PigeonTheme.cornerCard))
+                            .shadow(color: PigeonTheme.cardShadow, radius: PigeonTheme.cardShadowRadius, x: 0, y: PigeonTheme.cardShadowY)
                         }
                         .overlay {
                             GeometryReader { geo in
@@ -85,10 +85,10 @@ struct ProfileView: View {
                                 )
                             }
                         }
-                        .padding(.bottom, FactumTheme.spacing32)
+                        .padding(.bottom, PigeonTheme.spacing32)
                         
                         studyHistorySection
-                            .padding(.bottom, FactumTheme.spacing32)
+                            .padding(.bottom, PigeonTheme.spacing32)
                         
                         myPostsSection
                     } else if AuthService.shared.isSignedIn {
@@ -96,10 +96,10 @@ struct ProfileView: View {
                         VStack(spacing: 16) {
                             Spacer().frame(height: 80)
                             ProgressView()
-                                .tint(FactumTheme.accent)
+                                .tint(PigeonTheme.accent)
                             Text("Loading profile…")
-                                .font(FactumTheme.bodyFont)
-                                .foregroundStyle(FactumTheme.secondaryText)
+                                .font(PigeonTheme.bodyFont)
+                                .foregroundStyle(PigeonTheme.secondaryText)
                         }
                     } else {
                         signInPrompt
@@ -108,7 +108,7 @@ struct ProfileView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 100)
             }
-            .background(FactumTheme.background)
+            .background(PigeonTheme.background)
             .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $showEditProfile) {
                 EditProfileView()
@@ -141,17 +141,19 @@ struct ProfileView: View {
                 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(user.displayName)
-                        .font(FactumTheme.titleFont)
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .font(PigeonTheme.titleFont)
+                        .foregroundStyle(PigeonTheme.primaryText)
                     
-                    Text(user.email)
-                        .font(FactumTheme.captionFont)
-                        .foregroundStyle(FactumTheme.tertiaryText)
+                    if let username = user.username, !username.isEmpty {
+                        Text("@\(username)")
+                            .font(PigeonTheme.captionFont)
+                            .foregroundStyle(PigeonTheme.accent)
+                    }
                     
                     if !user.bio.isEmpty {
                         Text(user.bio)
-                            .font(FactumTheme.captionFont)
-                            .foregroundStyle(FactumTheme.secondaryText)
+                            .font(PigeonTheme.captionFont)
+                            .foregroundStyle(PigeonTheme.secondaryText)
                             .lineLimit(2)
                     }
                 }
@@ -163,9 +165,9 @@ struct ProfileView: View {
                 } label: {
                     Image(systemName: "pencil")
                         .font(.system(size: 17))
-                        .foregroundStyle(FactumTheme.secondaryText)
+                        .foregroundStyle(PigeonTheme.secondaryText)
                         .padding(12)
-                        .background(FactumTheme.cardBackground)
+                        .background(PigeonTheme.cardBackground)
                         .clipShape(Circle())
                 }
             }
@@ -217,19 +219,19 @@ struct ProfileView: View {
             statCard(value: "\(userTimelapses.count)", label: "Sessions")
             streakCard(days: computedStreakDays)
         }
-        .background(FactumTheme.cardBackground)
-        .clipShape(OrganicRect(base: FactumTheme.cornerCard))
-        .shadow(color: FactumTheme.cardShadow, radius: FactumTheme.cardShadowRadius, x: 0, y: FactumTheme.cardShadowY)
+        .background(PigeonTheme.cardBackground)
+        .clipShape(OrganicRect(base: PigeonTheme.cornerCard))
+        .shadow(color: PigeonTheme.cardShadow, radius: PigeonTheme.cardShadowRadius, x: 0, y: PigeonTheme.cardShadowY)
     }
     
     private func statCard(value: String, label: String) -> some View {
         VStack(spacing: 6) {
             Text(value)
-                .font(FactumTheme.font(18, weight: .bold))
-                .foregroundStyle(FactumTheme.primaryText)
+                .font(PigeonTheme.font(18, weight: .bold))
+                .foregroundStyle(PigeonTheme.primaryText)
             Text(label)
-                .font(FactumTheme.captionFont)
-                .foregroundStyle(FactumTheme.secondaryText)
+                .font(PigeonTheme.captionFont)
+                .foregroundStyle(PigeonTheme.secondaryText)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)
@@ -247,12 +249,12 @@ struct ProfileView: View {
                     .font(.system(size: flameSize))
                     .foregroundStyle(.orange.opacity(flameOpacity))
                 Text("\(days)")
-                    .font(FactumTheme.font(18, weight: .bold))
-                    .foregroundStyle(FactumTheme.primaryText)
+                    .font(PigeonTheme.font(18, weight: .bold))
+                    .foregroundStyle(PigeonTheme.primaryText)
             }
             Text("Day Streak")
-                .font(FactumTheme.captionFont)
-                .foregroundStyle(FactumTheme.secondaryText)
+                .font(PigeonTheme.captionFont)
+                .foregroundStyle(PigeonTheme.secondaryText)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)
@@ -260,38 +262,47 @@ struct ProfileView: View {
     
     // MARK: - Study History
     
+    /// Pre-computed weekly activity data to avoid per-cell Calendar work in the body.
+    private var weeklyActivity: [(label: String, minutes: Int, intensity: Double)] {
+        let dayNames = ["M", "T", "W", "T", "F", "S", "S"]
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let weekday = calendar.component(.weekday, from: today)
+        let daysFromMonday = (weekday + 5) % 7
+        guard let monday = calendar.date(byAdding: .day, value: -daysFromMonday, to: today) else { return [] }
+
+        // Build a lookup of study minutes per day (O(n) single pass)
+        var minutesByDay: [Date: Int] = [:]
+        for tl in userTimelapses {
+            let day = calendar.startOfDay(for: tl.createdAt)
+            minutesByDay[day, default: 0] += tl.durationSeconds / 60
+        }
+        let maxMinutes = max(1, minutesByDay.values.max() ?? 1)
+
+        return (0..<7).map { offset in
+            let targetDate = calendar.date(byAdding: .day, value: offset, to: monday)!
+            let mins = minutesByDay[targetDate] ?? 0
+            let intensity = mins > 0 ? max(0.3, min(1.0, Double(mins) / Double(maxMinutes))) : 0.0
+            return (dayNames[offset], mins, intensity)
+        }
+    }
+
     private var studyHistorySection: some View {
-        VStack(alignment: .leading, spacing: FactumTheme.spacing12) {
+        VStack(alignment: .leading, spacing: PigeonTheme.spacing12) {
             Text("This Week")
-                .factumSectionTitle()
+                .pigeonSectionTitle()
             
-            // Weekly activity grid — computed from real session data
             HStack(spacing: 6) {
-                ForEach(0..<7, id: \.self) { dayOffset in
-                    let dayNames = ["M", "T", "W", "T", "F", "S", "S"]
-                    let calendar = Calendar.current
-                    let today = calendar.startOfDay(for: Date())
-                    // Calculate the Monday of this week
-                    let weekday = calendar.component(.weekday, from: today)
-                    let daysFromMonday = (weekday + 5) % 7 // Monday = 0
-                    let monday = calendar.date(byAdding: .day, value: -daysFromMonday, to: today)!
-                    let targetDate = calendar.date(byAdding: .day, value: dayOffset, to: monday)!
-                    
-                    let dayMinutes = userTimelapses.filter { calendar.isDate(calendar.startOfDay(for: $0.createdAt), inSameDayAs: targetDate) }
-                        .reduce(0) { $0 + $1.durationSeconds / 60 }
-                    let hasActivity = dayMinutes > 0
-                    let maxMinutes = max(1, userTimelapses.map { $0.durationSeconds / 60 }.max() ?? 1)
-                    let intensity = hasActivity ? max(0.3, min(1.0, Double(dayMinutes) / Double(maxMinutes))) : 0.0
-                    
+                ForEach(Array(weeklyActivity.enumerated()), id: \.offset) { _, day in
                     VStack(spacing: 6) {
-                        Text(dayNames[dayOffset])
-                            .font(FactumTheme.smallFont)
-                            .foregroundStyle(FactumTheme.tertiaryText)
+                        Text(day.label)
+                            .font(PigeonTheme.smallFont)
+                            .foregroundStyle(PigeonTheme.tertiaryText)
                         
                         RoundedRectangle(cornerRadius: 6)
-                            .fill(hasActivity
-                                  ? FactumTheme.accent.opacity(intensity)
-                                  : FactumTheme.surfaceBackground)
+                            .fill(day.minutes > 0
+                                  ? PigeonTheme.accent.opacity(day.intensity)
+                                  : PigeonTheme.surfaceBackground)
                             .frame(height: 40)
                     }
                     .frame(maxWidth: .infinity)
@@ -305,10 +316,10 @@ struct ProfileView: View {
     @State private var showAllSessions = false
     
     private var myPostsSection: some View {
-        VStack(alignment: .leading, spacing: FactumTheme.spacing12) {
+        VStack(alignment: .leading, spacing: PigeonTheme.spacing12) {
             HStack {
                 Text("My Sessions")
-                    .factumSectionTitle()
+                    .pigeonSectionTitle()
                 
                 Spacer()
                 
@@ -317,18 +328,18 @@ struct ProfileView: View {
                         showAllSessions = true
                     } label: {
                         Text("View All")
-                            .font(FactumTheme.captionFont)
-                            .foregroundStyle(FactumTheme.accent)
+                            .font(PigeonTheme.captionFont)
+                            .foregroundStyle(PigeonTheme.accent)
                     }
                 }
             }
             
             if userTimelapses.isEmpty {
                 Text("Your recorded sessions will appear here.")
-                    .font(FactumTheme.captionFont)
-                    .foregroundStyle(FactumTheme.tertiaryText)
+                    .font(PigeonTheme.captionFont)
+                    .foregroundStyle(PigeonTheme.tertiaryText)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, FactumTheme.spacing16)
+                    .padding(.vertical, PigeonTheme.spacing16)
             } else {
                 // Show recent sessions as full cards (up to 3)
                 ForEach(Array(userTimelapses.prefix(3))) { timelapse in
@@ -348,15 +359,15 @@ struct ProfileView: View {
             Spacer()
                 .frame(height: 60)
             
-            FactumIcon(size: 80, color: FactumTheme.secondaryText)
+            PigeonIcon(size: 112, color: PigeonTheme.secondaryText)
             
-            Text("Welcome to Factum")
-                .font(FactumTheme.titleFont)
-                .foregroundStyle(FactumTheme.primaryText)
+            Text("Welcome to Pigeon")
+                .font(PigeonTheme.titleFont)
+                .foregroundStyle(PigeonTheme.primaryText)
             
             Text("Sign in to track your study sessions\nand connect with friends")
-                .font(FactumTheme.bodyFont)
-                .foregroundStyle(FactumTheme.secondaryText)
+                .font(PigeonTheme.bodyFont)
+                .foregroundStyle(PigeonTheme.secondaryText)
                 .multilineTextAlignment(.center)
             
             // Google Sign-In button
@@ -370,12 +381,12 @@ struct ProfileView: View {
                     Image(systemName: "g.circle.fill")
                         .font(.system(size: 22))
                     Text("Sign in with Google")
-                        .font(FactumTheme.subheadlineFont)
+                        .font(PigeonTheme.subheadlineFont)
                 }
-                .foregroundStyle(FactumTheme.primaryText)
+                .foregroundStyle(PigeonTheme.primaryText)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 14)
-                .background(FactumTheme.cardBackground)
+                .background(PigeonTheme.cardBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
             }
             .padding(.horizontal, 20)
@@ -391,13 +402,22 @@ struct EditProfileView: View {
     @Query private var users: [UserProfile]
     @State private var displayName = ""
     @State private var bio = ""
+    @State private var username = ""
+    @State private var originalUsername = ""
+    @State private var usernameAvailable: Bool? = nil
+    @State private var isCheckingUsername = false
+    @State private var usernameCheckTask: Task<Void, Never>?
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var avatarImageData: Data?
-    
-    
+    @State private var isPrivateAccount = true
+
     private var currentUser: UserProfile? {
         let uid = AuthService.shared.currentUserID
         return users.first { $0.firebaseUID == uid }
+    }
+    
+    private var usernameChanged: Bool {
+        username != originalUsername
     }
     
     var body: some View {
@@ -423,33 +443,33 @@ struct EditProfileView: View {
                                         .clipShape(Circle())
                                 default:
                                     Circle()
-                                        .fill(FactumTheme.elevated)
+                                        .fill(PigeonTheme.elevated)
                                         .frame(width: 80, height: 80)
                                         .overlay(
                                             Image(systemName: "camera.fill")
                                                 .font(.system(size: 24))
-                                                .foregroundStyle(FactumTheme.secondaryText)
+                                                .foregroundStyle(PigeonTheme.secondaryText)
                                         )
                                 }
                             }
                         } else {
                             Circle()
-                                .fill(FactumTheme.elevated)
+                                .fill(PigeonTheme.elevated)
                                 .frame(width: 80, height: 80)
                                 .overlay(
                                     Image(systemName: "camera.fill")
                                         .font(.system(size: 24))
-                                        .foregroundStyle(FactumTheme.secondaryText)
+                                        .foregroundStyle(PigeonTheme.secondaryText)
                                 )
                         }
                         
                         Circle()
-                            .fill(FactumTheme.accent)
+                            .fill(PigeonTheme.accent)
                             .frame(width: 24, height: 24)
                             .overlay(
                                 Image(systemName: "pencil")
                                     .font(.system(size: 12, weight: .bold))
-                                    .foregroundStyle(FactumTheme.accentText)
+                                    .foregroundStyle(PigeonTheme.accentText)
                             )
                     }
                 }
@@ -464,35 +484,119 @@ struct EditProfileView: View {
                 
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Display Name")
-                        .font(FactumTheme.captionFont)
-                        .foregroundStyle(FactumTheme.secondaryText)
+                        .font(PigeonTheme.captionFont)
+                        .foregroundStyle(PigeonTheme.secondaryText)
                     
                     TextField("Your name", text: $displayName)
-                        .font(FactumTheme.bodyFont)
-                        .foregroundStyle(FactumTheme.primaryText)
-                        .tint(FactumTheme.primaryText)
+                        .font(PigeonTheme.bodyFont)
+                        .foregroundStyle(PigeonTheme.primaryText)
+                        .tint(PigeonTheme.primaryText)
                         .padding(14)
-                        .background(FactumTheme.cardBackground)
+                        .background(PigeonTheme.cardBackground)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
                 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Bio")
-                        .font(FactumTheme.captionFont)
-                        .foregroundStyle(FactumTheme.secondaryText)
+                    Text("Username")
+                        .font(PigeonTheme.captionFont)
+                        .foregroundStyle(PigeonTheme.secondaryText)
                     
-                    TextField("Tell people about yourself", text: $bio)
-                        .font(FactumTheme.bodyFont)
-                        .foregroundStyle(FactumTheme.primaryText)
-                        .padding(14)
-                        .background(FactumTheme.cardBackground)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    HStack(spacing: 4) {
+                        Text("@")
+                            .font(PigeonTheme.bodyFont)
+                            .foregroundStyle(PigeonTheme.tertiaryText)
+                        TextField("username", text: $username)
+                            .font(PigeonTheme.bodyFont)
+                            .foregroundStyle(PigeonTheme.primaryText)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .onChange(of: username) { _, newValue in
+                                let sanitized = newValue.lowercased().filter { $0.isLetter || $0.isNumber || $0 == "_" }
+                                if sanitized != newValue { username = sanitized }
+                                // If reverted to original, no need to check
+                                if sanitized == originalUsername {
+                                    usernameAvailable = nil
+                                    isCheckingUsername = false
+                                    usernameCheckTask?.cancel()
+                                    return
+                                }
+                                usernameAvailable = nil
+                                usernameCheckTask?.cancel()
+                                guard sanitized.count >= 3 else { return }
+                                usernameCheckTask = Task {
+                                    isCheckingUsername = true
+                                    try? await Task.sleep(for: .milliseconds(400))
+                                    guard !Task.isCancelled else { return }
+                                    usernameAvailable = try? await SupabaseService.shared.isUsernameAvailable(sanitized)
+                                    isCheckingUsername = false
+                                }
+                            }
+                    }
+                    .padding(14)
+                    .background(PigeonTheme.cardBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .strokeBorder(
+                                usernameChanged && usernameAvailable == true ? Color.green.opacity(0.5) :
+                                usernameChanged && usernameAvailable == false ? PigeonTheme.destructive.opacity(0.5) :
+                                Color.clear,
+                                lineWidth: 1.5
+                            )
+                    )
+                    
+                    if isCheckingUsername {
+                        HStack(spacing: 6) {
+                            ProgressView().scaleEffect(0.7)
+                            Text("Checking...")
+                                .font(PigeonTheme.captionFont)
+                                .foregroundStyle(PigeonTheme.tertiaryText)
+                        }
+                    } else if usernameChanged, let available = usernameAvailable {
+                        Text(available ? "Username available" : "Username taken")
+                            .font(PigeonTheme.captionFont)
+                            .foregroundStyle(available ? .green : PigeonTheme.destructive)
+                    }
                 }
                 
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Bio")
+                        .font(PigeonTheme.captionFont)
+                        .foregroundStyle(PigeonTheme.secondaryText)
+                    
+                    TextField("Tell people about yourself", text: $bio)
+                        .font(PigeonTheme.bodyFont)
+                        .foregroundStyle(PigeonTheme.primaryText)
+                        .padding(14)
+                        .background(PigeonTheme.cardBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
+
+                // Account privacy toggle
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Private Account")
+                            .font(PigeonTheme.subheadlineFont)
+                            .foregroundStyle(PigeonTheme.primaryText)
+                        Text(isPrivateAccount
+                             ? "Only friends can see your sessions"
+                             : "Anyone can see your sessions in the feed")
+                            .font(PigeonTheme.smallFont)
+                            .foregroundStyle(PigeonTheme.tertiaryText)
+                    }
+                    Spacer()
+                    Toggle("", isOn: $isPrivateAccount)
+                        .labelsHidden()
+                        .tint(PigeonTheme.accent)
+                }
+                .padding(14)
+                .background(PigeonTheme.cardBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+
                 Spacer()
             }
             .padding(.horizontal, 16)
-            .background(FactumTheme.background)
+            .background(PigeonTheme.background)
             .onTapGesture {
                 UIApplication.shared.sendAction(
                     #selector(UIResponder.resignFirstResponder),
@@ -503,19 +607,20 @@ struct EditProfileView: View {
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     Text("Edit Profile")
-                        .font(FactumTheme.headlineFont)
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .font(PigeonTheme.headlineFont)
+                        .foregroundStyle(PigeonTheme.primaryText)
                 }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
-                        .foregroundStyle(FactumTheme.accent)
-                        .font(FactumTheme.bodyFont)
+                        .foregroundStyle(PigeonTheme.accent)
+                        .font(PigeonTheme.bodyFont)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         guard let user = currentUser else { return }
                         user.displayName = displayName
                         user.bio = bio
+                        user.isPrivate = isPrivateAccount
                         
                         // Save avatar locally (MVP: no cloud upload)
                         if let avatarImageData {
@@ -526,25 +631,41 @@ struct EditProfileView: View {
                             user.avatarURL = avatarPath.absoluteString
                         }
                         
+                        // Handle username change
+                        let newUsername = username.lowercased()
+                        let needsUsernameClaim = usernameChanged && newUsername.count >= 3 && usernameAvailable == true
+                        
                         // Sync profile changes to Supabase
                         Task {
+                            if needsUsernameClaim {
+                                let uid = AuthService.shared.currentUserID
+                                let claimed = try? await SupabaseService.shared.claimUsername(newUsername, forUser: uid)
+                                if claimed == true {
+                                    await MainActor.run {
+                                        user.username = newUsername
+                                    }
+                                }
+                            }
                             try? await SupabaseService.shared.saveUserProfile(user)
                         }
                         
                         dismiss()
                     }
-                    .foregroundStyle(FactumTheme.accent)
-                    .font(FactumTheme.font(15, weight: .semibold))
+                    .foregroundStyle(PigeonTheme.accent)
+                    .font(PigeonTheme.font(15, weight: .semibold))
                 }
             }
-            .toolbarBackground(FactumTheme.background, for: .navigationBar)
+            .toolbarBackground(PigeonTheme.background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
         }
-        .presentationBackground(FactumTheme.background)
+        .presentationBackground(PigeonTheme.background)
         .onAppear {
             if let user = currentUser {
                 displayName = user.displayName
                 bio = user.bio
+                username = user.username ?? ""
+                originalUsername = user.username ?? ""
+                isPrivateAccount = user.isPrivate
             }
         }
     }
@@ -577,17 +698,17 @@ struct SettingsView: View {
                     } label: {
                         settingsRow(icon: "bell.fill", title: "Notifications")
                     }
-                    .listRowBackground(FactumTheme.cardBackground)
+                    .listRowBackground(PigeonTheme.cardBackground)
                     NavigationLink {
                         SettingsPlaceholderView(title: "Privacy")
                     } label: {
                         settingsRow(icon: "lock.fill", title: "Privacy")
                     }
-                    .listRowBackground(FactumTheme.cardBackground)
+                    .listRowBackground(PigeonTheme.cardBackground)
 
                     HStack(spacing: 12) {
                         Image(systemName: "paintbrush.fill")
-                            .foregroundStyle(FactumTheme.secondaryText)
+                            .foregroundStyle(PigeonTheme.secondaryText)
                             .frame(width: 28)
                         Picker("Appearance", selection: $appearanceMode) {
                             Text("Light").tag(1)
@@ -605,57 +726,57 @@ struct SettingsView: View {
                             )
                         }
                     }
-                    .listRowBackground(FactumTheme.cardBackground)
+                    .listRowBackground(PigeonTheme.cardBackground)
                     NavigationLink {
                         ManageSubjectsView()
                     } label: {
                         settingsRow(icon: "book.fill", title: "Manage Subjects")
                     }
-                    .listRowBackground(FactumTheme.cardBackground)
+                    .listRowBackground(PigeonTheme.cardBackground)
                     
                     HStack(spacing: 12) {
                         Image(systemName: "moon.fill")
-                            .foregroundStyle(FactumTheme.secondaryText)
+                            .foregroundStyle(PigeonTheme.secondaryText)
                             .frame(width: 28)
                         Toggle(isOn: $autoDimScreen) {
                             Text("Dim Screen While Recording")
-                                .font(FactumTheme.bodyFont)
-                                .foregroundStyle(FactumTheme.primaryText)
+                                .font(PigeonTheme.bodyFont)
+                                .foregroundStyle(PigeonTheme.primaryText)
                         }
-                        .tint(FactumTheme.accent)
+                        .tint(PigeonTheme.accent)
                     }
-                    .listRowBackground(FactumTheme.cardBackground)
+                    .listRowBackground(PigeonTheme.cardBackground)
                 } header: {
                     Text("Preferences")
-                        .font(FactumTheme.smallFont)
-                        .foregroundStyle(FactumTheme.secondaryText)
+                        .font(PigeonTheme.smallFont)
+                        .foregroundStyle(PigeonTheme.secondaryText)
                 }
                 
                 Section {
                     HStack(spacing: 12) {
                         Image(systemName: "photo.on.rectangle.angled")
-                            .foregroundStyle(FactumTheme.secondaryText)
+                            .foregroundStyle(PigeonTheme.secondaryText)
                             .frame(width: 28)
                         
                         if isRequestingScope {
                             HStack {
                                 Text("Google Photos Backup")
-                                    .font(FactumTheme.bodyFont)
-                                    .foregroundStyle(FactumTheme.primaryText)
+                                    .font(PigeonTheme.bodyFont)
+                                    .foregroundStyle(PigeonTheme.primaryText)
                                 Spacer()
                                 ProgressView()
-                                    .tint(FactumTheme.accent)
+                                    .tint(PigeonTheme.accent)
                             }
                         } else {
                             Toggle(isOn: $googlePhotosBackup) {
                                 Text("Google Photos Backup")
-                                    .font(FactumTheme.bodyFont)
-                                    .foregroundStyle(FactumTheme.primaryText)
+                                    .font(PigeonTheme.bodyFont)
+                                    .foregroundStyle(PigeonTheme.primaryText)
                             }
-                            .tint(FactumTheme.accent)
+                            .tint(PigeonTheme.accent)
                         }
                     }
-                    .listRowBackground(FactumTheme.cardBackground)
+                    .listRowBackground(PigeonTheme.cardBackground)
                     .onChange(of: googlePhotosBackup) { _, enabled in
                         if enabled {
                             Task {
@@ -677,8 +798,8 @@ struct SettingsView: View {
                     }
                 } header: {
                     Text("Backup")
-                        .font(FactumTheme.smallFont)
-                        .foregroundStyle(FactumTheme.secondaryText)
+                        .font(PigeonTheme.smallFont)
+                        .foregroundStyle(PigeonTheme.secondaryText)
                 }
                 
                 Section {
@@ -687,17 +808,17 @@ struct SettingsView: View {
                     } label: {
                         settingsRow(icon: "questionmark.circle.fill", title: "Help & Support")
                     }
-                    .listRowBackground(FactumTheme.cardBackground)
+                    .listRowBackground(PigeonTheme.cardBackground)
                     NavigationLink {
-                        SettingsPlaceholderView(title: "About Factum")
+                        SettingsPlaceholderView(title: "About Pigeon")
                     } label: {
-                        settingsRow(icon: "info.circle.fill", title: "About Factum")
+                        settingsRow(icon: "info.circle.fill", title: "About Pigeon")
                     }
-                    .listRowBackground(FactumTheme.cardBackground)
+                    .listRowBackground(PigeonTheme.cardBackground)
                 } header: {
                     Text("Support")
-                        .font(FactumTheme.smallFont)
-                        .foregroundStyle(FactumTheme.secondaryText)
+                        .font(PigeonTheme.smallFont)
+                        .foregroundStyle(PigeonTheme.secondaryText)
                 }
                 
                 Section {
@@ -714,17 +835,17 @@ struct SettingsView: View {
                     } label: {
                         HStack {
                             Image(systemName: "rectangle.portrait.and.arrow.right")
-                                .foregroundStyle(FactumTheme.destructive)
+                                .foregroundStyle(PigeonTheme.destructive)
                             Text("Sign Out")
-                                .font(FactumTheme.bodyFont)
-                                .foregroundStyle(FactumTheme.destructive)
+                                .font(PigeonTheme.bodyFont)
+                                .foregroundStyle(PigeonTheme.destructive)
                         }
                     }
-                    .listRowBackground(FactumTheme.cardBackground)
+                    .listRowBackground(PigeonTheme.cardBackground)
                 }
             }
             .scrollContentBackground(.hidden)
-            .background(FactumTheme.background)
+            .background(PigeonTheme.background)
             .alert("Google Photos", isPresented: $showScopeError) {
                 Button("OK", role: .cancel) { }
             } message: {
@@ -734,16 +855,16 @@ struct SettingsView: View {
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     Text("Settings")
-                        .font(FactumTheme.headlineFont)
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .font(PigeonTheme.headlineFont)
+                        .foregroundStyle(PigeonTheme.primaryText)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
-                        .foregroundStyle(FactumTheme.accent)
-                        .font(FactumTheme.bodyFont)
+                        .foregroundStyle(PigeonTheme.accent)
+                        .font(PigeonTheme.bodyFont)
                 }
             }
-            .toolbarBackground(FactumTheme.background, for: .navigationBar)
+            .toolbarBackground(PigeonTheme.background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
         }
         .preferredColorScheme(appearanceMode == 1 ? .light : .dark)
@@ -758,11 +879,11 @@ struct SettingsView: View {
     private func settingsRow(icon: String, title: String) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
-                .foregroundStyle(FactumTheme.secondaryText)
+                .foregroundStyle(PigeonTheme.secondaryText)
                 .frame(width: 28)
             Text(title)
-                .font(FactumTheme.bodyFont)
-                .foregroundStyle(FactumTheme.primaryText)
+                .font(PigeonTheme.bodyFont)
+                .foregroundStyle(PigeonTheme.primaryText)
         }
     }
 }
@@ -785,24 +906,24 @@ struct AllSessionsView: View {
                 .padding(.top, 8)
                 .padding(.bottom, 40)
             }
-            .background(FactumTheme.background)
+            .background(PigeonTheme.background)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     Text("All Sessions")
-                        .font(FactumTheme.headlineFont)
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .font(PigeonTheme.headlineFont)
+                        .foregroundStyle(PigeonTheme.primaryText)
                 }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
-                        .foregroundStyle(FactumTheme.accent)
-                        .font(FactumTheme.bodyFont)
+                        .foregroundStyle(PigeonTheme.accent)
+                        .font(PigeonTheme.bodyFont)
                 }
             }
-            .toolbarBackground(FactumTheme.background, for: .navigationBar)
+            .toolbarBackground(PigeonTheme.background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
         }
-        .presentationBackground(FactumTheme.background)
+        .presentationBackground(PigeonTheme.background)
     }
 }
 
@@ -829,50 +950,50 @@ struct SettingsPlaceholderView: View {
         case "Help & Support":
             return "Have a question or found a bug? We'd love to hear from you."
         default:
-            return "Factum helps you build consistent study habits through timelapses, tracking, and accountability."
+            return "Pigeon helps you build consistent study habits through timelapses, tracking, and accountability."
         }
     }
     
     var body: some View {
-        VStack(spacing: FactumTheme.spacing24) {
+        VStack(spacing: PigeonTheme.spacing24) {
             Spacer()
             
             Image(systemName: icon)
                 .font(.system(size: 32, weight: .light))
-                .foregroundStyle(FactumTheme.secondaryText)
+                .foregroundStyle(PigeonTheme.secondaryText)
             
-            VStack(spacing: FactumTheme.spacing8) {
+            VStack(spacing: PigeonTheme.spacing8) {
                 Text(title)
-                    .font(FactumTheme.headlineFont)
-                    .foregroundStyle(FactumTheme.primaryText)
+                    .font(PigeonTheme.headlineFont)
+                    .foregroundStyle(PigeonTheme.primaryText)
                 
                 Text(description)
-                    .font(FactumTheme.bodyFont)
-                    .foregroundStyle(FactumTheme.secondaryText)
+                    .font(PigeonTheme.bodyFont)
+                    .foregroundStyle(PigeonTheme.secondaryText)
                     .multilineTextAlignment(.center)
                     .lineSpacing(4)
             }
-            .padding(.horizontal, FactumTheme.spacing32)
+            .padding(.horizontal, PigeonTheme.spacing32)
             
             Spacer()
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(FactumTheme.background)
+        .background(PigeonTheme.background)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {
                 Text(title)
-                    .font(FactumTheme.headlineFont)
-                    .foregroundStyle(FactumTheme.primaryText)
+                    .font(PigeonTheme.headlineFont)
+                    .foregroundStyle(PigeonTheme.primaryText)
             }
         }
-        .toolbarBackground(FactumTheme.background, for: .navigationBar)
+        .toolbarBackground(PigeonTheme.background, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
     }
 }
 
 #Preview {
     ProfileView()
-        .modelContainer(for: [UserProfile.self, StudyTimelapse.self, TimelapseComment.self, StudyGroup.self, StudySubject.self], inMemory: true)
+        .modelContainer(for: [UserProfile.self, StudyTimelapse.self, StudyGroup.self, StudySubject.self], inMemory: true)
 }

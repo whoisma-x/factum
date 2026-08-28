@@ -1,6 +1,6 @@
 //
 //  StatsView.swift
-//  Factum
+//  Pigeon
 //
 //  Study stats with date navigation, donut charts, stacked bar charts,
 //  monthly/yearly views, and long-press day detail.
@@ -112,15 +112,15 @@ struct StatsView: View {
                     } label: {
                         Image(systemName: "chevron.left")
                             .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(FactumTheme.primaryText)
+                            .foregroundStyle(PigeonTheme.primaryText)
                             .frame(width: 36, height: 36)
-                            .background(FactumTheme.cardBackground)
+                            .background(PigeonTheme.cardBackground)
                             .clipShape(Circle())
                     }
                     
                     Text("Study Stats")
-                        .font(FactumTheme.titleFont)
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .font(PigeonTheme.titleFont)
+                        .foregroundStyle(PigeonTheme.primaryText)
                     
                     Spacer()
                 }
@@ -152,7 +152,7 @@ struct StatsView: View {
             }
             .padding(.bottom, 100)
         }
-        .background(FactumTheme.background)
+        .background(PigeonTheme.background)
         .toolbar(.hidden, for: .navigationBar)
     }
     
@@ -168,17 +168,17 @@ struct StatsView: View {
                     }
                 } label: {
                     Text(mode.rawValue)
-                        .font(FactumTheme.font(12, weight: selectedMode == mode ? .semibold : .regular))
-                        .foregroundStyle(selectedMode == mode ? FactumTheme.accentText : FactumTheme.secondaryText)
+                        .font(PigeonTheme.font(12, weight: selectedMode == mode ? .semibold : .regular))
+                        .foregroundStyle(selectedMode == mode ? PigeonTheme.accentText : PigeonTheme.secondaryText)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 10)
-                        .background(selectedMode == mode ? FactumTheme.accent : Color.clear)
+                        .background(selectedMode == mode ? PigeonTheme.accent : Color.clear)
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
             }
         }
         .padding(3)
-        .background(FactumTheme.cardBackground)
+        .background(PigeonTheme.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .padding(.horizontal, 16)
     }
@@ -194,9 +194,9 @@ struct StatsView: View {
                 } label: {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .foregroundStyle(PigeonTheme.primaryText)
                         .frame(width: 36, height: 36)
-                        .background(FactumTheme.cardBackground)
+                        .background(PigeonTheme.cardBackground)
                         .clipShape(Circle())
                 }
             }
@@ -204,8 +204,8 @@ struct StatsView: View {
             Spacer()
 
             Text(dateLabel)
-                .font(FactumTheme.subheadlineFont)
-                .foregroundStyle(FactumTheme.primaryText)
+                .font(PigeonTheme.subheadlineFont)
+                .foregroundStyle(PigeonTheme.primaryText)
 
             Spacer()
 
@@ -216,9 +216,9 @@ struct StatsView: View {
                 } label: {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(canGoForward ? FactumTheme.primaryText : FactumTheme.tertiaryText)
+                        .foregroundStyle(canGoForward ? PigeonTheme.primaryText : PigeonTheme.tertiaryText)
                         .frame(width: 36, height: 36)
-                        .background(FactumTheme.cardBackground)
+                        .background(PigeonTheme.cardBackground)
                         .clipShape(Circle())
                 }
                 .disabled(!canGoForward)
@@ -273,8 +273,8 @@ struct StatsView: View {
 
         return VStack(alignment: .leading, spacing: 12) {
             Text("Summary")
-                .font(FactumTheme.headlineFont)
-                .foregroundStyle(FactumTheme.primaryText)
+                .font(PigeonTheme.headlineFont)
+                .foregroundStyle(PigeonTheme.primaryText)
 
             HStack(spacing: 12) {
                 summaryCard(value: formatDuration(totalSeconds), label: "Total Time")
@@ -285,7 +285,7 @@ struct StatsView: View {
             HStack(spacing: 12) {
                 summaryCard(value: "\(totalLeaves)", label: "App Leaves")
                     .overlay(
-                        RoundedRectangle(cornerRadius: FactumTheme.cornerCard)
+                        RoundedRectangle(cornerRadius: PigeonTheme.cornerCard)
                             .strokeBorder(totalLeaves == 0 ? .green.opacity(0.3) : .red.opacity(0.3), lineWidth: 1)
                     )
                 summaryCard(value: String(format: "%.1f", avgPerSession), label: "Avg/Session")
@@ -310,30 +310,30 @@ struct StatsView: View {
         
         return VStack(alignment: .leading, spacing: 8) {
             Text("Most Studied")
-                .font(FactumTheme.headlineFont)
-                .foregroundStyle(FactumTheme.primaryText)
+                .font(PigeonTheme.headlineFont)
+                .foregroundStyle(PigeonTheme.primaryText)
                 .padding(.top, 8)
             
             ForEach(highlights, id: \.label) { item in
                 HStack(spacing: 12) {
                     Text(item.label)
-                        .font(FactumTheme.captionFont)
-                        .foregroundStyle(FactumTheme.secondaryText)
+                        .font(PigeonTheme.captionFont)
+                        .foregroundStyle(PigeonTheme.secondaryText)
                         .frame(width: 52, alignment: .leading)
                     
                     Text(item.dateString)
-                        .font(FactumTheme.bodyFont)
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .font(PigeonTheme.bodyFont)
+                        .foregroundStyle(PigeonTheme.primaryText)
                     
                     Spacer()
                     
                     Text(formatDuration(item.seconds))
-                        .font(FactumTheme.font(15, weight: .semibold))
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .font(PigeonTheme.font(15, weight: .semibold))
+                        .foregroundStyle(PigeonTheme.primaryText)
                 }
                 .padding(.vertical, 10)
                 .padding(.horizontal, 14)
-                .background(FactumTheme.cardBackground)
+                .background(PigeonTheme.cardBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
             }
         }
@@ -403,17 +403,17 @@ struct StatsView: View {
     private func summaryCard(value: String, label: String) -> some View {
         VStack(spacing: 6) {
             Text(value)
-                .font(FactumTheme.font(18, weight: .bold))
-                .foregroundStyle(FactumTheme.primaryText)
+                .font(PigeonTheme.font(18, weight: .bold))
+                .foregroundStyle(PigeonTheme.primaryText)
             Text(label)
-                .font(FactumTheme.captionFont)
-                .foregroundStyle(FactumTheme.secondaryText)
+                .font(PigeonTheme.captionFont)
+                .foregroundStyle(PigeonTheme.secondaryText)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)
-        .background(FactumTheme.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: FactumTheme.cornerCard))
-        .shadow(color: FactumTheme.cardShadow, radius: FactumTheme.cardShadowRadius, x: 0, y: FactumTheme.cardShadowY)
+        .background(PigeonTheme.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: PigeonTheme.cornerCard))
+        .shadow(color: PigeonTheme.cardShadow, radius: PigeonTheme.cardShadowRadius, x: 0, y: PigeonTheme.cardShadowY)
     }
 }
 
@@ -450,15 +450,15 @@ struct PeriodDetailPopover: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text(title)
-                    .font(FactumTheme.subheadlineFont)
-                    .foregroundStyle(FactumTheme.primaryText)
+                    .font(PigeonTheme.subheadlineFont)
+                    .foregroundStyle(PigeonTheme.primaryText)
                 Spacer()
                 Button {
                     onDismiss()
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 18))
-                        .foregroundStyle(FactumTheme.tertiaryText)
+                        .foregroundStyle(PigeonTheme.tertiaryText)
                 }
             }
             
@@ -468,21 +468,21 @@ struct PeriodDetailPopover: View {
                         .fill(item.color)
                         .frame(width: 14, height: 14)
                     Text(item.subject)
-                        .font(FactumTheme.bodyFont)
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .font(PigeonTheme.bodyFont)
+                        .foregroundStyle(PigeonTheme.primaryText)
                     Spacer()
                     Text("\(item.percent)%")
-                        .font(FactumTheme.font(15, weight: .semibold))
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .font(PigeonTheme.font(15, weight: .semibold))
+                        .foregroundStyle(PigeonTheme.primaryText)
                     Text(formatDuration(item.seconds))
-                        .font(FactumTheme.captionFont)
-                        .foregroundStyle(FactumTheme.secondaryText)
+                        .font(PigeonTheme.captionFont)
+                        .foregroundStyle(PigeonTheme.secondaryText)
                         .frame(width: 52, alignment: .trailing)
                 }
             }
         }
         .padding(14)
-        .background(FactumTheme.elevated)
+        .background(PigeonTheme.elevated)
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }
@@ -529,11 +529,11 @@ struct DonutChartContent: View {
                     
                     VStack(spacing: 4) {
                         Text(formatDuration(totalSeconds))
-                            .font(FactumTheme.font(22, weight: .bold))
-                            .foregroundStyle(FactumTheme.primaryText)
+                            .font(PigeonTheme.font(22, weight: .bold))
+                            .foregroundStyle(PigeonTheme.primaryText)
                         Text(centerLabel)
-                            .font(FactumTheme.captionFont)
-                            .foregroundStyle(FactumTheme.secondaryText)
+                            .font(PigeonTheme.captionFont)
+                            .foregroundStyle(PigeonTheme.secondaryText)
                     }
                 }
                 
@@ -546,15 +546,15 @@ struct DonutChartContent: View {
                                 .frame(width: 14, height: 14)
                             
                             Text(item.subject)
-                                .font(FactumTheme.bodyFont)
-                                .foregroundStyle(FactumTheme.primaryText)
+                                .font(PigeonTheme.bodyFont)
+                                .foregroundStyle(PigeonTheme.primaryText)
                             
                             Spacer()
                             
                             let percent = totalSeconds > 0 ? Int(Double(item.seconds) / Double(totalSeconds) * 100) : 0
                             Text("\(formatDuration(item.seconds)) (\(percent)%)")
-                                .font(FactumTheme.captionFont)
-                                .foregroundStyle(FactumTheme.secondaryText)
+                                .font(PigeonTheme.captionFont)
+                                .foregroundStyle(PigeonTheme.secondaryText)
                         }
                     }
                 }
@@ -567,13 +567,13 @@ struct DonutChartContent: View {
         VStack(spacing: 12) {
             Image(systemName: "chart.pie")
                 .font(.system(size: 40))
-                .foregroundStyle(FactumTheme.tertiaryText)
+                .foregroundStyle(PigeonTheme.tertiaryText)
             Text("No study sessions")
-                .font(FactumTheme.subheadlineFont)
-                .foregroundStyle(FactumTheme.secondaryText)
+                .font(PigeonTheme.subheadlineFont)
+                .foregroundStyle(PigeonTheme.secondaryText)
             Text("Start a session to see your breakdown")
-                .font(FactumTheme.captionFont)
-                .foregroundStyle(FactumTheme.tertiaryText)
+                .font(PigeonTheme.captionFont)
+                .foregroundStyle(PigeonTheme.tertiaryText)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 40)
@@ -588,7 +588,7 @@ struct DonutChartView: View {
     
     var body: some View {
         DonutChartContent(breakdown: breakdown, centerLabel: centerLabel)
-            .background(FactumTheme.cardBackground)
+            .background(PigeonTheme.cardBackground)
             .clipShape(RoundedRectangle(cornerRadius: 16))
             .padding(.horizontal, 16)
     }
@@ -723,18 +723,18 @@ struct WeeklyStatsView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("\(totalMinutes / 60)h \(totalMinutes % 60)m")
-                            .font(FactumTheme.font(24, weight: .bold))
-                            .foregroundStyle(FactumTheme.primaryText)
+                            .font(PigeonTheme.font(24, weight: .bold))
+                            .foregroundStyle(PigeonTheme.primaryText)
                         Text("total")
-                            .font(FactumTheme.captionFont)
-                            .foregroundStyle(FactumTheme.secondaryText)
+                            .font(PigeonTheme.captionFont)
+                            .foregroundStyle(PigeonTheme.secondaryText)
                     }
                     Spacer()
                     
                     if selectedDay == nil {
                         Text("Tap bar for details")
-                            .font(FactumTheme.smallFont)
-                            .foregroundStyle(FactumTheme.tertiaryText)
+                            .font(PigeonTheme.smallFont)
+                            .foregroundStyle(PigeonTheme.tertiaryText)
                     }
                 }
                 
@@ -752,13 +752,13 @@ struct WeeklyStatsView: View {
                 .chartXAxis {
                     AxisMarks(values: weekDays) { _ in
                         AxisValueLabel(format: .dateTime.weekday(.abbreviated))
-                            .foregroundStyle(FactumTheme.secondaryText)
+                            .foregroundStyle(PigeonTheme.secondaryText)
                     }
                 }
                 .chartYAxis {
                     AxisMarks { _ in
-                        AxisGridLine().foregroundStyle(FactumTheme.separator)
-                        AxisValueLabel().foregroundStyle(FactumTheme.tertiaryText)
+                        AxisGridLine().foregroundStyle(PigeonTheme.separator)
+                        AxisValueLabel().foregroundStyle(PigeonTheme.tertiaryText)
                     }
                 }
                 .chartYAxisLabel(useHours ? "hr" : "min", position: .trailing)
@@ -820,12 +820,12 @@ struct WeeklyStatsView: View {
                         .fill(item.color)
                         .frame(width: 14, height: 14)
                     Text(item.subject)
-                        .font(FactumTheme.bodyFont)
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .font(PigeonTheme.bodyFont)
+                        .foregroundStyle(PigeonTheme.primaryText)
                     Spacer()
                     Text("\(item.totalMinutes / 60)h \(item.totalMinutes % 60)m")
-                        .font(FactumTheme.captionFont)
-                        .foregroundStyle(FactumTheme.secondaryText)
+                        .font(PigeonTheme.captionFont)
+                        .foregroundStyle(PigeonTheme.secondaryText)
                 }
             }
         }
@@ -943,11 +943,11 @@ struct MonthlyStatsView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(formatDuration(totalMin * 60))
-                        .font(FactumTheme.font(24, weight: .bold))
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .font(PigeonTheme.font(24, weight: .bold))
+                        .foregroundStyle(PigeonTheme.primaryText)
                     Text("this month")
-                        .font(FactumTheme.captionFont)
-                        .foregroundStyle(FactumTheme.secondaryText)
+                        .font(PigeonTheme.captionFont)
+                        .foregroundStyle(PigeonTheme.secondaryText)
                 }
                 Spacer()
             }
@@ -956,8 +956,8 @@ struct MonthlyStatsView: View {
             HStack(spacing: 4) {
                 ForEach(weekdayHeaders, id: \.id) { item in
                     Text(item.label)
-                        .font(FactumTheme.font(11, weight: .medium))
-                        .foregroundStyle(FactumTheme.tertiaryText)
+                        .font(PigeonTheme.font(11, weight: .medium))
+                        .foregroundStyle(PigeonTheme.tertiaryText)
                         .frame(maxWidth: .infinity)
                 }
             }
@@ -1000,16 +1000,16 @@ struct MonthlyStatsView: View {
     private func dayCell(day: Int, minutes: Int, intensity: Double, isToday: Bool, isSelected: Bool) -> some View {
         VStack(spacing: 2) {
             Text("\(day)")
-                .font(FactumTheme.font(16, weight: minutes > 0 || isToday ? .semibold : .light))
-                .foregroundStyle(isToday ? FactumTheme.background : (minutes > 0 ? FactumTheme.primaryText : FactumTheme.tertiaryText))
+                .font(PigeonTheme.font(16, weight: minutes > 0 || isToday ? .semibold : .light))
+                .foregroundStyle(isToday ? PigeonTheme.background : (minutes > 0 ? PigeonTheme.primaryText : PigeonTheme.tertiaryText))
             
             if minutes > 0 {
                 Text(minutes >= 60 ? "\(minutes / 60)h\(minutes % 60 > 0 ? " \(minutes % 60)m" : "")" : "\(minutes)m")
-                    .font(FactumTheme.font(8, weight: .medium))
-                    .foregroundStyle(isToday ? FactumTheme.background.opacity(0.7) : FactumTheme.secondaryText)
+                    .font(PigeonTheme.font(8, weight: .medium))
+                    .foregroundStyle(isToday ? PigeonTheme.background.opacity(0.7) : PigeonTheme.secondaryText)
             } else {
                 Text("")
-                    .font(FactumTheme.font(8))
+                    .font(PigeonTheme.font(8))
             }
         }
         .frame(maxWidth: .infinity)
@@ -1017,14 +1017,14 @@ struct MonthlyStatsView: View {
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(isToday
-                      ? FactumTheme.primaryText
+                      ? PigeonTheme.primaryText
                       : (minutes > 0
-                         ? FactumTheme.accent.opacity(0.3 + intensity * 0.7)
-                         : FactumTheme.surfaceBackground))
+                         ? PigeonTheme.accent.opacity(0.3 + intensity * 0.7)
+                         : PigeonTheme.surfaceBackground))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(isSelected ? FactumTheme.primaryText : Color.clear, lineWidth: 2)
+                .stroke(isSelected ? PigeonTheme.primaryText : Color.clear, lineWidth: 2)
         )
         .onLongPressGesture(minimumDuration: 0.3) {
             withAnimation(.easeInOut(duration: 0.2)) {
@@ -1135,18 +1135,18 @@ struct YearlyStatsView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(String(format: "%.0fh", totalHours))
-                            .font(FactumTheme.font(24, weight: .bold))
-                            .foregroundStyle(FactumTheme.primaryText)
+                            .font(PigeonTheme.font(24, weight: .bold))
+                            .foregroundStyle(PigeonTheme.primaryText)
                         Text("total this year")
-                            .font(FactumTheme.captionFont)
-                            .foregroundStyle(FactumTheme.secondaryText)
+                            .font(PigeonTheme.captionFont)
+                            .foregroundStyle(PigeonTheme.secondaryText)
                     }
                     Spacer()
                     
                     if selectedMonth == nil {
                         Text("Tap bar for details")
-                            .font(FactumTheme.smallFont)
-                            .foregroundStyle(FactumTheme.tertiaryText)
+                            .font(PigeonTheme.smallFont)
+                            .foregroundStyle(PigeonTheme.tertiaryText)
                     }
                 }
                 
@@ -1162,13 +1162,13 @@ struct YearlyStatsView: View {
                 .chartXAxis {
                     AxisMarks(values: monthDates) { _ in
                         AxisValueLabel(format: .dateTime.month(.narrow))
-                            .foregroundStyle(FactumTheme.secondaryText)
+                            .foregroundStyle(PigeonTheme.secondaryText)
                     }
                 }
                 .chartYAxis {
                     AxisMarks { _ in
-                        AxisGridLine().foregroundStyle(FactumTheme.separator)
-                        AxisValueLabel().foregroundStyle(FactumTheme.tertiaryText)
+                        AxisGridLine().foregroundStyle(PigeonTheme.separator)
+                        AxisValueLabel().foregroundStyle(PigeonTheme.tertiaryText)
                     }
                 }
                 .chartYAxisLabel("hours", position: .trailing)
@@ -1230,12 +1230,12 @@ struct YearlyStatsView: View {
                         .fill(item.color)
                         .frame(width: 14, height: 14)
                     Text(item.subject)
-                        .font(FactumTheme.bodyFont)
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .font(PigeonTheme.bodyFont)
+                        .foregroundStyle(PigeonTheme.primaryText)
                     Spacer()
                     Text(String(format: "%.1fh", item.totalHours))
-                        .font(FactumTheme.captionFont)
-                        .foregroundStyle(FactumTheme.secondaryText)
+                        .font(PigeonTheme.captionFont)
+                        .foregroundStyle(PigeonTheme.secondaryText)
                 }
             }
         }
@@ -1254,13 +1254,13 @@ struct AppLeavesPerHourChartContent: View {
                 VStack(spacing: 12) {
                     Image(systemName: "hand.thumbsup.fill")
                         .font(.system(size: 40))
-                        .foregroundStyle(FactumTheme.tertiaryText)
+                        .foregroundStyle(PigeonTheme.tertiaryText)
                     Text("No app leaves")
-                        .font(FactumTheme.subheadlineFont)
-                        .foregroundStyle(FactumTheme.secondaryText)
+                        .font(PigeonTheme.subheadlineFont)
+                        .foregroundStyle(PigeonTheme.secondaryText)
                     Text("Great focus!")
-                        .font(FactumTheme.captionFont)
-                        .foregroundStyle(FactumTheme.tertiaryText)
+                        .font(PigeonTheme.captionFont)
+                        .foregroundStyle(PigeonTheme.tertiaryText)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 40)
@@ -1270,11 +1270,11 @@ struct AppLeavesPerHourChartContent: View {
                         let nonZero = data.filter { $0.rate > 0 }
                         let avgRate = nonZero.isEmpty ? 0 : nonZero.reduce(0.0) { $0 + $1.rate } / Double(nonZero.count)
                         Text(String(format: "%.1f", avgRate))
-                            .font(FactumTheme.font(24, weight: .bold))
-                            .foregroundStyle(FactumTheme.primaryText)
+                            .font(PigeonTheme.font(24, weight: .bold))
+                            .foregroundStyle(PigeonTheme.primaryText)
                         Text("avg leaves/hr")
-                            .font(FactumTheme.captionFont)
-                            .foregroundStyle(FactumTheme.secondaryText)
+                            .font(PigeonTheme.captionFont)
+                            .foregroundStyle(PigeonTheme.secondaryText)
                     }
                     Spacer()
                 }
@@ -1292,8 +1292,8 @@ struct AppLeavesPerHourChartContent: View {
                 }
                 .chartYAxis {
                     AxisMarks { _ in
-                        AxisGridLine().foregroundStyle(FactumTheme.separator)
-                        AxisValueLabel().foregroundStyle(FactumTheme.tertiaryText)
+                        AxisGridLine().foregroundStyle(PigeonTheme.separator)
+                        AxisValueLabel().foregroundStyle(PigeonTheme.tertiaryText)
                     }
                 }
                 .chartYAxisLabel("leaves/hr", position: .trailing)
@@ -1430,19 +1430,22 @@ struct SwipeableCard: View {
                         .onAppear { cardWidth = geo.size.width }
                         .onChange(of: geo.size.width) { _, w in cardWidth = w }
                 })
-                .gesture(
-                    DragGesture(minimumDistance: 15)
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 25)
                         .onChanged { value in
-                            if abs(value.translation.width) > abs(value.translation.height) {
+                            // Only track clearly horizontal drags so vertical
+                            // scrolling passes through to the parent ScrollView
+                            if abs(value.translation.width) > abs(value.translation.height) * 1.5 {
                                 dragOffset = value.translation.width
                             }
                         }
                         .onEnded { value in
                             let threshold: CGFloat = 60
+                            let isHorizontal = abs(value.translation.width) > abs(value.translation.height) * 1.5
                             withAnimation(.easeInOut(duration: 0.25)) {
-                                if value.translation.width < -threshold && currentPage < pageCount - 1 {
+                                if isHorizontal && value.translation.width < -threshold && currentPage < pageCount - 1 {
                                     currentPage += 1
-                                } else if value.translation.width > threshold && currentPage > 0 {
+                                } else if isHorizontal && value.translation.width > threshold && currentPage > 0 {
                                     currentPage -= 1
                                 }
                                 dragOffset = 0
@@ -1456,7 +1459,7 @@ struct SwipeableCard: View {
                     ForEach(0..<pageCount, id: \.self) { i in
                         RoundedRectangle(cornerRadius: 3)
                             .fill(i == currentPage
-                                  ? FactumTheme.primaryText : FactumTheme.separator)
+                                  ? PigeonTheme.primaryText : PigeonTheme.separator)
                             .frame(width: i == currentPage ? 16 : 6, height: 6)
                     }
                 }
@@ -1465,7 +1468,7 @@ struct SwipeableCard: View {
                 .animation(.easeInOut(duration: 0.15), value: currentPage)
             }
         }
-        .background(FactumTheme.cardBackground)
+        .background(PigeonTheme.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .padding(.horizontal, 16)
         .onPreferenceChange(PageHeightPreferenceKey.self) { pageHeights = $0 }
@@ -1515,13 +1518,13 @@ func emptyBarState(message: String) -> some View {
     VStack(spacing: 12) {
         Image(systemName: "chart.bar")
             .font(.system(size: 40))
-            .foregroundStyle(FactumTheme.tertiaryText)
+            .foregroundStyle(PigeonTheme.tertiaryText)
         Text(message)
-            .font(FactumTheme.subheadlineFont)
-            .foregroundStyle(FactumTheme.secondaryText)
+            .font(PigeonTheme.subheadlineFont)
+            .foregroundStyle(PigeonTheme.secondaryText)
         Text("Start studying to see your progress")
-            .font(FactumTheme.captionFont)
-            .foregroundStyle(FactumTheme.tertiaryText)
+            .font(PigeonTheme.captionFont)
+            .foregroundStyle(PigeonTheme.tertiaryText)
     }
     .frame(maxWidth: .infinity)
     .padding(.vertical, 40)

@@ -1,6 +1,6 @@
 //
 //  SampleData.swift
-//  Factum
+//  Pigeon
 //
 //  Shared user identity for the local user + demo data seeding
 //
@@ -11,7 +11,7 @@ import SwiftData
 struct SampleData {
     /// A stable user ID that persists across app launches.
     static let currentUserID: UUID = {
-        let key = "factum_currentUserID"
+        let key = "pigeon_currentUserID"
         if let stored = UserDefaults.standard.string(forKey: key),
            let uuid = UUID(uuidString: stored) {
             return uuid
@@ -32,7 +32,7 @@ struct SampleData {
     static func seedDemoDataIfNeeded(authorID: String, authorName: String, email: String, context: ModelContext) {
         guard email.lowercased() == demoEmail else { return }
 
-        let key = "factum_demo_seeded_v4_\(authorID)"
+        let key = "pigeon_demo_seeded_v4_\(authorID)"
         guard !UserDefaults.standard.bool(forKey: key) else { return }
         UserDefaults.standard.set(true, forKey: key)
 
@@ -51,10 +51,17 @@ struct SampleData {
             newSubjects.append(subject)
         }
 
-        let subjectsToSync = newSubjects
+        // Sync newly seeded subjects to cloud in the background.
+        // Capture value types to avoid escaping references to the ModelContext.
+        let subjectsToSync = newSubjects.map { (name: $0.name, colorHex: $0.colorHex, sortOrder: $0.sortOrder) }
         let syncUID = authorID
-        Task {
-            try? await SupabaseService.shared.saveSubjects(subjectsToSync, forUser: syncUID)
+        Task.detached { @Sendable in
+            // Rebuild lightweight StudySubject instances off the main actor
+            // so we never pass SwiftData @Model objects across isolation domains.
+            let subjectsForUpload = subjectsToSync.map {
+                StudySubject(name: $0.name, colorHex: $0.colorHex, isUserCreated: false, sortOrder: $0.sortOrder)
+            }
+            try? await SupabaseService.shared.saveSubjects(subjectsForUpload, forUser: syncUID)
         }
 
         // --- Delete old demo sessions ---
@@ -231,6 +238,7 @@ struct SampleData {
                 timelapse.createdAt = sessionDate
                 timelapse.appLeaveCount = appLeaves
                 timelapse.subjectSegments = segments
+                timelapse.cloudSynced = true  // Demo data — no need to sync
 
                 context.insert(timelapse)
             }
@@ -239,7 +247,7 @@ struct SampleData {
         }
 
         try? context.save()
-        print("[FACTUM] Demo data v4 seeded for \(authorID)")
+        print("[PIGEON] Demo data v4 seeded for \(authorID)")
     }
 }
 

@@ -1,6 +1,6 @@
 //
 //  FeedView.swift
-//  Factum
+//  Pigeon
 //
 //  Home feed showing study timelapse posts
 //
@@ -14,10 +14,19 @@ struct FeedView: View {
     @Query(sort: \StudyTimelapse.createdAt, order: .reverse) private var allTimelapses: [StudyTimelapse]
     @Query private var users: [UserProfile]
     @State private var showingNewTimelapse = false
+    @State private var publicAuthorUIDs: [String] = []
+    
+    /// Number of the current user's sessions not yet backed up to Supabase.
+    private var unsyncedCount: Int {
+        let uid = AuthService.shared.currentUserID
+        return allTimelapses.filter { $0.authorID == uid && !$0.cloudSynced }.count
+    }
     
     private var timelapses: [StudyTimelapse] {
         let uid = AuthService.shared.currentUserID
-        return allTimelapses.filter { $0.authorID == uid }
+        let friendUIDs = currentUser?.friendUIDs ?? []
+        let allowedUIDs = Set([uid] + friendUIDs + publicAuthorUIDs)
+        return allTimelapses.filter { allowedUIDs.contains($0.authorID) }
     }
     
     private var currentUser: UserProfile? {
@@ -43,32 +52,53 @@ struct FeedView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 16) {
+                VStack(spacing: 20) {
                     // Logo header
-                    HStack(spacing: 8) {
-                        FactumIcon(size: 24, color: FactumTheme.primaryText)
-                        Text("factum")
-                            .font(FactumTheme.titleFont)
-                            .foregroundStyle(FactumTheme.primaryText)
-                            .tracking(2)
+                    HStack(spacing: 10) {
+                        PigeonIcon(size: 40, color: PigeonTheme.primaryText)
+                        Text("pigeon.")
+                            .font(.gloucester(size: 38))
+                            .foregroundStyle(PigeonTheme.primaryText)
+                            .tracking(3)
                         Spacer()
                     }
-                    .padding(.top, 8)
+                    .padding(.top, 12)
                     
                     // Greeting
-                    VStack(spacing: 4) {
+                    VStack(spacing: 6) {
                         Text("\(greeting), \(firstName).")
-                            .font(FactumTheme.headlineFont)
-                            .foregroundStyle(FactumTheme.primaryText)
+                            .font(PigeonTheme.headlineFont)
+                            .foregroundStyle(PigeonTheme.primaryText)
+                            .tracking(1)
                         
                         Text(timelapses.isEmpty ? "ready to get to work?" : "here's your recent sessions.")
-                            .font(FactumTheme.bodyFont)
-                            .foregroundStyle(FactumTheme.secondaryText)
+                            .font(PigeonTheme.bodyFont)
+                            .foregroundStyle(PigeonTheme.secondaryText)
+                            .tracking(0.5)
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
+                    .padding(.vertical, 12)
                     
-                    LazyVStack(spacing: 16) {
+                    // Unsynced sessions warning
+                    if unsyncedCount > 0 {
+                        HStack(spacing: 8) {
+                            Image(systemName: "icloud.slash")
+                                .font(.system(size: 14, weight: .medium))
+                            Text("\(unsyncedCount) session\(unsyncedCount == 1 ? "" : "s") not yet backed up")
+                                .font(PigeonTheme.smallFont)
+                            Spacer()
+                            ProgressView()
+                                .tint(PigeonTheme.primaryText.opacity(0.7))
+                                .scaleEffect(0.7)
+                        }
+                        .foregroundStyle(PigeonTheme.primaryText.opacity(0.8))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(PigeonTheme.accent.opacity(0.15))
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                    }
+                    
+                    LazyVStack(spacing: 20) {
                         if timelapses.isEmpty {
                             emptyState
                         } else {
@@ -81,8 +111,9 @@ struct FeedView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 100)
             }
-            .background(FactumTheme.background)
+            .background(PigeonTheme.background)
             .toolbar(.hidden, for: .navigationBar)
+            .task { await loadPublicFeed() }
             .fullScreenCover(isPresented: $showingNewTimelapse) {
                 TimelapseCameraView()
             }
@@ -94,25 +125,65 @@ struct FeedView: View {
             Spacer()
                 .frame(height: 60)
             
-            FactumIcon(size: 56, color: FactumTheme.tertiaryText)
-                .padding(.bottom, FactumTheme.spacing16)
+            PigeonIcon(size: 80, color: PigeonTheme.tertiaryText)
+                .padding(.bottom, PigeonTheme.spacing16)
             
             Text("Your feed is empty")
-                .font(FactumTheme.font(18, weight: .regular))
-                .foregroundStyle(FactumTheme.primaryText)
-                .padding(.bottom, FactumTheme.spacing4)
+                .font(PigeonTheme.font(18, weight: .regular))
+                .foregroundStyle(PigeonTheme.primaryText)
+                .padding(.bottom, PigeonTheme.spacing4)
             
             Text("Record a study session and it\nwill show up here.")
-                .font(FactumTheme.captionFont)
-                .foregroundStyle(FactumTheme.tertiaryText)
+                .font(PigeonTheme.captionFont)
+                .foregroundStyle(PigeonTheme.tertiaryText)
                 .multilineTextAlignment(.center)
                 .lineSpacing(3)
-                .padding(.bottom, FactumTheme.spacing24)
+                .padding(.bottom, PigeonTheme.spacing24)
             
             Button("Record a Session") {
                 showingNewTimelapse = true
             }
-            .buttonStyle(FactumButtonStyle())
+            .buttonStyle(PigeonButtonStyle())
+        }
+    }
+
+    private func loadPublicFeed() async {
+        let uid = AuthService.shared.currentUserID
+        guard !uid.isEmpty else { return }
+        do {
+            let publicRows = try await SupabaseService.shared.fetchPublicFeed(excludeUID: uid)
+            let existingIDs = Set(allTimelapses.map { $0.id })
+            var inserted = 0
+            for row in publicRows where !existingIDs.contains(row.id) {
+                let timelapse = StudyTimelapse(
+                    authorID: row.authorId.uuidString,
+                    authorName: row.authorName,
+                    authorAvatarURL: row.authorAvatarUrl,
+                    caption: row.caption,
+                    studyDescription: row.studyDescription,
+                    subject: row.subject,
+                    durationSeconds: row.durationSeconds,
+                    isLandscape: row.isLandscape
+                )
+                timelapse.id = row.id
+                timelapse.createdAt = row.createdAt
+                timelapse.likeCount = row.likeCount
+                timelapse.likedByUIDs = row.likedByUids
+                timelapse.commentCount = row.commentCount
+                timelapse.videoDownloadURL = row.videoDownloadUrl
+                timelapse.thumbnailDownloadURL = row.thumbnailDownloadUrl
+                if let segments = row.subjectSegmentsJson { timelapse.subjectSegmentsJSON = segments }
+                if let leaves = row.appLeaveCount { timelapse.appLeaveCount = leaves }
+                if let offTask = row.offTaskSeconds { timelapse.offTaskSeconds = offTask }
+                modelContext.insert(timelapse)
+                inserted += 1
+            }
+            publicAuthorUIDs = Array(Set(publicRows.map { $0.authorId.uuidString }))
+            if inserted > 0 {
+                print("[FEED] Inserted \(inserted) public timelapses into local store")
+            }
+        } catch {
+            print("[FEED] Public feed fetch failed: \(error)")
         }
     }
 }
@@ -190,7 +261,7 @@ struct TimelapseCardView: View {
                             // No-media post — show session stats centered
                             ZStack {
                                 Rectangle()
-                                    .fill(FactumTheme.surfaceBackground)
+                                    .fill(PigeonTheme.surfaceBackground)
                                 
                                 HStack(spacing: 24) {
                                     // Duration
@@ -198,19 +269,19 @@ struct TimelapseCardView: View {
                                         Image(systemName: "clock.fill")
                                             .font(.system(size: 20))
                                             .frame(height: 22)
-                                            .foregroundStyle(FactumTheme.accent)
+                                            .foregroundStyle(PigeonTheme.accent)
                                         Text(timelapse.formattedDuration)
-                                            .font(FactumTheme.font(16, weight: .bold))
+                                            .font(PigeonTheme.font(16, weight: .bold))
                                             .frame(height: 20)
-                                            .foregroundStyle(FactumTheme.primaryText)
+                                            .foregroundStyle(PigeonTheme.primaryText)
                                         Text("Duration")
-                                            .font(FactumTheme.smallFont)
+                                            .font(PigeonTheme.smallFont)
                                             .frame(height: 14)
-                                            .foregroundStyle(FactumTheme.tertiaryText)
+                                            .foregroundStyle(PigeonTheme.tertiaryText)
                                     }
                                     
                                     Rectangle()
-                                        .fill(FactumTheme.separator)
+                                        .fill(PigeonTheme.separator)
                                         .frame(width: 1, height: 44)
                                     
                                     // Subject
@@ -220,19 +291,19 @@ struct TimelapseCardView: View {
                                             .frame(height: 22)
                                             .foregroundStyle(StudySubject.color(for: timelapse.subject, in: subjects))
                                         Text(timelapse.subject)
-                                            .font(FactumTheme.font(16, weight: .bold))
+                                            .font(PigeonTheme.font(16, weight: .bold))
                                             .frame(height: 20)
-                                            .foregroundStyle(FactumTheme.primaryText)
+                                            .foregroundStyle(PigeonTheme.primaryText)
                                             .lineLimit(1)
                                         Text("Subject")
-                                            .font(FactumTheme.smallFont)
+                                            .font(PigeonTheme.smallFont)
                                             .frame(height: 14)
-                                            .foregroundStyle(FactumTheme.tertiaryText)
+                                            .foregroundStyle(PigeonTheme.tertiaryText)
                                     }
                                     
                                     if timelapse.appLeaveCount > 0 {
                                         Rectangle()
-                                            .fill(FactumTheme.separator)
+                                            .fill(PigeonTheme.separator)
                                             .frame(width: 1, height: 44)
                                         
                                         // App leaves
@@ -242,13 +313,13 @@ struct TimelapseCardView: View {
                                                 .frame(height: 22)
                                                 .foregroundStyle(.red.opacity(0.7))
                                             Text("\(timelapse.appLeaveCount)")
-                                                .font(FactumTheme.font(16, weight: .bold))
+                                                .font(PigeonTheme.font(16, weight: .bold))
                                                 .frame(height: 20)
-                                                .foregroundStyle(FactumTheme.primaryText)
+                                                .foregroundStyle(PigeonTheme.primaryText)
                                             Text("Left App")
-                                                .font(FactumTheme.smallFont)
+                                                .font(PigeonTheme.smallFont)
                                                 .frame(height: 14)
-                                                .foregroundStyle(FactumTheme.tertiaryText)
+                                                .foregroundStyle(PigeonTheme.tertiaryText)
                                         }
                                     }
                                 }
@@ -263,11 +334,11 @@ struct TimelapseCardView: View {
                             
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(timelapse.authorName)
-                                    .font(FactumTheme.subheadlineFont)
+                                    .font(PigeonTheme.subheadlineFont)
                                     .foregroundStyle(.white)
                                 
                                 Text(timelapse.createdAt.timeAgoDisplay())
-                                    .font(FactumTheme.captionFont)
+                                    .font(PigeonTheme.captionFont)
                                     .foregroundStyle(.white.opacity(0.7))
                             }
                             
@@ -283,7 +354,7 @@ struct TimelapseCardView: View {
                                 } label: {
                                     HStack(spacing: 4) {
                                         Text(timelapse.subject)
-                                            .font(FactumTheme.smallFont)
+                                            .font(PigeonTheme.smallFont)
                                         Image(systemName: showSubjectBreakdown ? "chevron.up" : "chevron.down")
                                             .font(.system(size: 8, weight: .bold))
                                     }
@@ -295,7 +366,7 @@ struct TimelapseCardView: View {
                                 }
                             } else {
                                 Text(timelapse.subject)
-                                    .font(FactumTheme.smallFont)
+                                    .font(PigeonTheme.smallFont)
                                     .foregroundStyle(.white)
                                     .padding(.horizontal, 10)
                                     .padding(.vertical, 4)
@@ -342,11 +413,11 @@ struct TimelapseCardView: View {
                                                 .fill(StudySubject.color(for: segment.subject, in: subjects))
                                                 .frame(width: 8, height: 8)
                                             Text(segment.subject)
-                                                .font(FactumTheme.smallFont)
+                                                .font(PigeonTheme.smallFont)
                                                 .foregroundStyle(.white)
                                             Spacer()
                                             Text(formatSegmentDuration(segment.seconds))
-                                                .font(FactumTheme.smallFont)
+                                                .font(PigeonTheme.smallFont)
                                                 .foregroundStyle(.white.opacity(0.7))
                                         }
                                     }
@@ -367,7 +438,7 @@ struct TimelapseCardView: View {
                             HStack {
                                 Spacer()
                                 Text(timelapse.formattedDuration)
-                                    .font(FactumTheme.smallFont)
+                                    .font(PigeonTheme.smallFont)
                                     .foregroundStyle(.white)
                                     .padding(.horizontal, 8)
                                     .padding(.vertical, 4)
@@ -395,20 +466,20 @@ struct TimelapseCardView: View {
                 }
             
             // Caption and description
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text(timelapse.caption)
-                    .font(FactumTheme.font(16, weight: .regular))
-                    .foregroundStyle(FactumTheme.primaryText)
+                    .font(PigeonTheme.font(18, weight: .regular))
+                    .foregroundStyle(PigeonTheme.primaryText)
                 
                 if !timelapse.studyDescription.isEmpty {
                     Text(timelapse.studyDescription)
-                        .font(FactumTheme.captionFont)
-                        .foregroundStyle(FactumTheme.tertiaryText)
+                        .font(PigeonTheme.captionFont)
+                        .foregroundStyle(PigeonTheme.tertiaryText)
                         .lineLimit(2)
                 }
             }
-            .padding(.horizontal, FactumTheme.spacing12)
-            .padding(.top, 10)
+            .padding(.horizontal, PigeonTheme.spacing16)
+            .padding(.top, 14)
             
             // Action bar — lighter weight, secondary
             HStack(spacing: 24) {
@@ -428,27 +499,20 @@ struct TimelapseCardView: View {
                         timelapse.likedByUIDs.removeAll { $0 == uid }
                         timelapse.likeCount = max(0, timelapse.likeCount - 1)
                     }
-                    // MVP: Likes stay local only
+                    Task {
+                        try? await SupabaseService.shared.toggleLike(
+                            timelapseID: timelapse.id.uuidString,
+                            userUID: uid,
+                            isLiked: isLiked
+                        )
+                    }
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: isLiked ? "heart.fill" : "heart")
-                            .foregroundStyle(isLiked ? FactumTheme.destructive : FactumTheme.secondaryText)
+                            .foregroundStyle(isLiked ? PigeonTheme.destructive : PigeonTheme.secondaryText)
                         Text("\(timelapse.likeCount)")
-                            .font(FactumTheme.captionFont)
-                            .foregroundStyle(FactumTheme.secondaryText)
-                    }
-                }
-                
-                Button {
-                    Haptics.light()
-                    showDetail = true
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "bubble.right")
-                            .foregroundStyle(FactumTheme.secondaryText)
-                        Text("\(timelapse.commentCount)")
-                            .font(FactumTheme.captionFont)
-                            .foregroundStyle(FactumTheme.secondaryText)
+                            .font(PigeonTheme.captionFont)
+                            .foregroundStyle(PigeonTheme.secondaryText)
                     }
                 }
 
@@ -462,17 +526,17 @@ struct TimelapseCardView: View {
                 } label: {
                     Image(systemName: "square.and.arrow.up")
                         .font(.system(size: 14))
-                        .foregroundStyle(FactumTheme.secondaryText)
+                        .foregroundStyle(PigeonTheme.secondaryText)
                 }
                 
                 Spacer()
             }
-            .padding(.horizontal, FactumTheme.spacing12)
-            .padding(.vertical, FactumTheme.spacing12)
+            .padding(.horizontal, PigeonTheme.spacing16)
+            .padding(.vertical, PigeonTheme.spacing12)
         }
-        .background(FactumTheme.cardBackground)
-        .clipShape(OrganicRect(base: FactumTheme.cornerCard))
-        .shadow(color: FactumTheme.cardShadow, radius: FactumTheme.cardShadowRadius, x: 0, y: FactumTheme.cardShadowY)
+        .background(PigeonTheme.cardBackground)
+        .clipShape(OrganicRect(base: PigeonTheme.cornerCard))
+        .shadow(color: PigeonTheme.cardShadow, radius: PigeonTheme.cardShadowRadius, x: 0, y: PigeonTheme.cardShadowY)
         .contentShape(Rectangle())
         .onTapGesture {
             showDetail = true
@@ -486,7 +550,7 @@ struct TimelapseCardView: View {
                 deleteTimelapse()
             }
         } message: {
-            Text("This will permanently delete this study session and its comments. This cannot be undone.")
+            Text("This will permanently delete this study session. This cannot be undone.")
         }
         .alert("Instagram Not Installed", isPresented: $showInstagramNotInstalled) {
             Button("OK", role: .cancel) {}
@@ -508,6 +572,8 @@ struct TimelapseCardView: View {
                 subjectSegments: timelapse.subjectSegments,
                 subjectColorResolver: colorResolver,
                 videoURL: timelapse.videoURL,
+                thumbnailData: timelapse.thumbnailData,
+                sessionDate: timelapse.createdAt,
                 onExport: {}
             )
         }
@@ -546,19 +612,13 @@ struct TimelapseCardView: View {
             try? FileManager.default.removeItem(at: videoURL)
         }
         
-        // Delete local comments for this timelapse
-        let descriptor = FetchDescriptor<TimelapseComment>(
-            predicate: #Predicate { $0.timelapseID == timelapseID }
-        )
-        if let comments = try? modelContext.fetch(descriptor) {
-            for comment in comments {
-                modelContext.delete(comment)
-            }
-        }
-        
         // Delete from SwiftData and persist immediately
         modelContext.delete(timelapse)
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            print("[DELETE] Local delete save failed: \(error.localizedDescription)")
+        }
         
         // Track pending cloud delete so syncTimelapses won't re-insert
         PendingDeleteStore.add(timelapseID)
@@ -600,10 +660,8 @@ struct TimelapseDetailView: View {
     let timelapse: StudyTimelapse
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
-    @Query private var comments: [TimelapseComment]
     @Query private var users: [UserProfile]
     @Query(sort: \StudySubject.sortOrder) private var subjects: [StudySubject]
-    @State private var newComment = ""
     @State private var player: AVPlayer?
     @State private var isLiked = false
     @State private var cachedThumbnail: UIImage?
@@ -614,10 +672,6 @@ struct TimelapseDetailView: View {
     private var currentUserName: String {
         let uid = AuthService.shared.currentUserID
         return users.first { $0.firebaseUID == uid }?.displayName ?? "You"
-    }
-    
-    private var filteredComments: [TimelapseComment] {
-        comments.filter { $0.timelapseID == timelapse.id }
     }
     
     var body: some View {
@@ -648,26 +702,26 @@ struct TimelapseDetailView: View {
                         } else {
                             // No-media — show session stats
                             Rectangle()
-                                .fill(FactumTheme.surfaceBackground)
+                                .fill(PigeonTheme.surfaceBackground)
                                 .overlay(
                                     HStack(spacing: 24) {
                                         VStack(spacing: 6) {
                                             Image(systemName: "clock.fill")
                                                 .font(.system(size: 20))
                                                 .frame(height: 22)
-                                                .foregroundStyle(FactumTheme.accent)
+                                                .foregroundStyle(PigeonTheme.accent)
                                             Text(timelapse.formattedDuration)
-                                                .font(FactumTheme.font(16, weight: .bold))
+                                                .font(PigeonTheme.font(16, weight: .bold))
                                                 .frame(height: 20)
-                                                .foregroundStyle(FactumTheme.primaryText)
+                                                .foregroundStyle(PigeonTheme.primaryText)
                                             Text("Duration")
-                                                .font(FactumTheme.smallFont)
+                                                .font(PigeonTheme.smallFont)
                                                 .frame(height: 14)
-                                                .foregroundStyle(FactumTheme.tertiaryText)
+                                                .foregroundStyle(PigeonTheme.tertiaryText)
                                         }
                                         
                                         Rectangle()
-                                            .fill(FactumTheme.separator)
+                                            .fill(PigeonTheme.separator)
                                             .frame(width: 1, height: 44)
                                         
                                         VStack(spacing: 6) {
@@ -676,19 +730,19 @@ struct TimelapseDetailView: View {
                                                 .frame(height: 22)
                                                 .foregroundStyle(StudySubject.color(for: timelapse.subject, in: subjects))
                                             Text(timelapse.subject)
-                                                .font(FactumTheme.font(16, weight: .bold))
+                                                .font(PigeonTheme.font(16, weight: .bold))
                                                 .frame(height: 20)
-                                                .foregroundStyle(FactumTheme.primaryText)
+                                                .foregroundStyle(PigeonTheme.primaryText)
                                                 .lineLimit(1)
                                             Text("Subject")
-                                                .font(FactumTheme.smallFont)
+                                                .font(PigeonTheme.smallFont)
                                                 .frame(height: 14)
-                                                .foregroundStyle(FactumTheme.tertiaryText)
+                                                .foregroundStyle(PigeonTheme.tertiaryText)
                                         }
                                         
                                         if timelapse.appLeaveCount > 0 {
                                             Rectangle()
-                                                .fill(FactumTheme.separator)
+                                                .fill(PigeonTheme.separator)
                                                 .frame(width: 1, height: 44)
                                             
                                             VStack(spacing: 6) {
@@ -697,13 +751,13 @@ struct TimelapseDetailView: View {
                                                     .frame(height: 22)
                                                     .foregroundStyle(.red.opacity(0.7))
                                                 Text("\(timelapse.appLeaveCount)")
-                                                    .font(FactumTheme.font(16, weight: .bold))
+                                                    .font(PigeonTheme.font(16, weight: .bold))
                                                     .frame(height: 20)
-                                                    .foregroundStyle(FactumTheme.primaryText)
+                                                    .foregroundStyle(PigeonTheme.primaryText)
                                                 Text("Left App")
-                                                    .font(FactumTheme.smallFont)
+                                                    .font(PigeonTheme.smallFont)
                                                     .frame(height: 14)
-                                                    .foregroundStyle(FactumTheme.tertiaryText)
+                                                    .foregroundStyle(PigeonTheme.tertiaryText)
                                             }
                                         }
                                     }
@@ -724,27 +778,27 @@ struct TimelapseDetailView: View {
                         
                         VStack(alignment: .leading, spacing: 2) {
                             Text(timelapse.authorName)
-                                .font(FactumTheme.subheadlineFont)
-                                .foregroundStyle(FactumTheme.primaryText)
+                                .font(PigeonTheme.subheadlineFont)
+                                .foregroundStyle(PigeonTheme.primaryText)
                             Text(timelapse.createdAt.formatted(date: .abbreviated, time: .shortened))
-                                .font(FactumTheme.captionFont)
-                                .foregroundStyle(FactumTheme.tertiaryText)
+                                .font(PigeonTheme.captionFont)
+                                .foregroundStyle(PigeonTheme.tertiaryText)
                         }
                     }
                     
                     // Caption
                     Text(timelapse.caption)
-                        .font(FactumTheme.headlineFont)
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .font(PigeonTheme.headlineFont)
+                        .foregroundStyle(PigeonTheme.primaryText)
                     
                     // Subject(s)
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
                             Image(systemName: "book.fill")
-                                .foregroundStyle(FactumTheme.secondaryText)
+                                .foregroundStyle(PigeonTheme.secondaryText)
                             Text(timelapse.subject)
-                                .font(FactumTheme.bodyFont)
-                                .foregroundStyle(FactumTheme.secondaryText)
+                                .font(PigeonTheme.bodyFont)
+                                .foregroundStyle(PigeonTheme.secondaryText)
                         }
                         if timelapse.hasMultipleSubjects {
                             ForEach(timelapse.subjectSegments) { segment in
@@ -753,12 +807,12 @@ struct TimelapseDetailView: View {
                                         .fill(StudySubject.color(for: segment.subject, in: subjects))
                                         .frame(width: 8, height: 8)
                                     Text(segment.subject)
-                                        .font(FactumTheme.captionFont)
-                                        .foregroundStyle(FactumTheme.primaryText)
+                                        .font(PigeonTheme.captionFont)
+                                        .foregroundStyle(PigeonTheme.primaryText)
                                     Spacer()
                                     Text(formatSegmentDuration(segment.seconds))
-                                        .font(FactumTheme.captionFont)
-                                        .foregroundStyle(FactumTheme.secondaryText)
+                                        .font(PigeonTheme.captionFont)
+                                        .foregroundStyle(PigeonTheme.secondaryText)
                                 }
                                 .padding(.leading, 24)
                             }
@@ -768,8 +822,8 @@ struct TimelapseDetailView: View {
                     // Description
                     if !timelapse.studyDescription.isEmpty {
                         Text(timelapse.studyDescription)
-                            .font(FactumTheme.bodyFont)
-                            .foregroundStyle(FactumTheme.secondaryText)
+                            .font(PigeonTheme.bodyFont)
+                            .foregroundStyle(PigeonTheme.secondaryText)
                             .lineSpacing(4)
                     }
                     
@@ -791,25 +845,22 @@ struct TimelapseDetailView: View {
                                 timelapse.likedByUIDs.removeAll { $0 == uid }
                                 timelapse.likeCount = max(0, timelapse.likeCount - 1)
                             }
-                            // MVP: Likes stay local only
+                            Task {
+                                try? await SupabaseService.shared.toggleLike(
+                                    timelapseID: timelapse.id.uuidString,
+                                    userUID: uid,
+                                    isLiked: isLiked
+                                )
+                            }
                         } label: {
                             HStack(spacing: 6) {
                                 Image(systemName: isLiked ? "heart.fill" : "heart")
                                     .font(.system(size: 20))
-                                    .foregroundStyle(isLiked ? FactumTheme.destructive : FactumTheme.secondaryText)
+                                    .foregroundStyle(isLiked ? PigeonTheme.destructive : PigeonTheme.secondaryText)
                                 Text("\(timelapse.likeCount)")
-                                    .font(FactumTheme.bodyFont)
-                                    .foregroundStyle(FactumTheme.secondaryText)
+                                    .font(PigeonTheme.bodyFont)
+                                    .foregroundStyle(PigeonTheme.secondaryText)
                             }
-                        }
-                        
-                        HStack(spacing: 6) {
-                            Image(systemName: "bubble.right")
-                                .font(.system(size: 18))
-                                .foregroundStyle(FactumTheme.secondaryText)
-                            Text("\(timelapse.commentCount)")
-                                .font(FactumTheme.bodyFont)
-                                .foregroundStyle(FactumTheme.secondaryText)
                         }
                         
                         Spacer()
@@ -824,62 +875,17 @@ struct TimelapseDetailView: View {
                         } label: {
                             Image(systemName: "square.and.arrow.up")
                                 .font(.system(size: 18))
-                                .foregroundStyle(FactumTheme.secondaryText)
+                                .foregroundStyle(PigeonTheme.secondaryText)
                         }
                     }
                     
                     Divider()
-                        .background(FactumTheme.separator)
-                    
-                    // Comments section
-                    Text("Comments")
-                        .font(FactumTheme.subheadlineFont)
-                        .foregroundStyle(FactumTheme.primaryText)
-                    
-                    if filteredComments.isEmpty {
-                        Text("No comments yet. Be the first!")
-                            .font(FactumTheme.bodyFont)
-                            .foregroundStyle(FactumTheme.tertiaryText)
-                            .padding(.vertical, 20)
-                    } else {
-                        ForEach(filteredComments) { comment in
-                            CommentRow(comment: comment)
-                        }
-                    }
-                    
-                    // Add comment
-                    HStack(spacing: 10) {
-                        TextField("Add a comment...", text: $newComment)
-                            .font(FactumTheme.bodyFont)
-                            .foregroundStyle(FactumTheme.primaryText)
-                            .padding(12)
-                            .background(FactumTheme.elevated)
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-                        
-                        Button {
-                            Haptics.light()
-                            guard !newComment.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-                            let comment = TimelapseComment(
-                                timelapseID: timelapse.id,
-                                authorID: AuthService.shared.currentUserID,
-                                authorName: currentUserName,
-                                text: newComment
-                            )
-                            modelContext.insert(comment)
-                            timelapse.commentCount += 1
-                            // MVP: Comments stay local only
-                            newComment = ""
-                        } label: {
-                            Image(systemName: "arrow.up.circle.fill")
-                                .font(.system(size: 32))
-                                .foregroundStyle(FactumTheme.accent)
-                        }
-                    }
+                        .background(PigeonTheme.separator)
                 }
                 .padding(16)
             }
             .scrollDismissesKeyboard(.interactively)
-            .background(FactumTheme.background)
+            .background(PigeonTheme.background)
             .onTapGesture {
                 UIApplication.shared.sendAction(
                     #selector(UIResponder.resignFirstResponder),
@@ -890,11 +896,11 @@ struct TimelapseDetailView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
-                        .foregroundStyle(FactumTheme.accent)
-                        .font(FactumTheme.bodyFont)
+                        .foregroundStyle(PigeonTheme.accent)
+                        .font(PigeonTheme.bodyFont)
                 }
             }
-            .toolbarBackground(FactumTheme.background, for: .navigationBar)
+            .toolbarBackground(PigeonTheme.background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
             .alert("Instagram Not Found", isPresented: $showInstagramNotInstalled) {
                 Button("OK", role: .cancel) { }
@@ -916,6 +922,8 @@ struct TimelapseDetailView: View {
                     subjectSegments: timelapse.subjectSegments,
                     subjectColorResolver: colorResolver,
                     videoURL: timelapse.videoURL,
+                    thumbnailData: timelapse.thumbnailData,
+                    sessionDate: timelapse.createdAt,
                     onExport: {}
                 )
             }
@@ -951,34 +959,7 @@ struct TimelapseDetailView: View {
                 player = nil
             }
         }
-        .presentationBackground(FactumTheme.background)
-    }
-}
-
-struct CommentRow: View {
-    let comment: TimelapseComment
-    
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            avatarView(name: comment.authorName, size: 28)
-            
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text(comment.authorName)
-                        .font(FactumTheme.font(13, weight: .semibold))
-                        .foregroundStyle(FactumTheme.primaryText)
-                    
-                    Text(comment.createdAt.timeAgoDisplay())
-                        .font(FactumTheme.smallFont)
-                        .foregroundStyle(FactumTheme.tertiaryText)
-                }
-                
-                Text(comment.text)
-                    .font(FactumTheme.bodyFont)
-                    .foregroundStyle(FactumTheme.secondaryText)
-            }
-        }
-        .padding(.vertical, 4)
+        .presentationBackground(PigeonTheme.background)
     }
 }
 
@@ -1011,23 +992,23 @@ func avatarView(name: String, size: CGFloat, avatarURL: String? = nil) -> some V
                         .clipShape(Circle())
                 default:
                     Circle()
-                        .fill(FactumTheme.elevated)
+                        .fill(PigeonTheme.elevated)
                         .frame(width: size, height: size)
                         .overlay(
                             Text(initial)
                                 .font(.system(size: size * 0.4, weight: .semibold, design: .rounded))
-                                .foregroundStyle(FactumTheme.primaryText)
+                                .foregroundStyle(PigeonTheme.primaryText)
                         )
                 }
             }
         } else {
             Circle()
-                .fill(FactumTheme.elevated)
+                .fill(PigeonTheme.elevated)
                 .frame(width: size, height: size)
                 .overlay(
                     Text(initial)
                         .font(.system(size: size * 0.4, weight: .semibold, design: .rounded))
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .foregroundStyle(PigeonTheme.primaryText)
                 )
         }
     }

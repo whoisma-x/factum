@@ -1,6 +1,6 @@
 //
 //  AuthService.swift
-//  Factum
+//  Pigeon
 //
 //  Supabase Authentication + Google Sign-In
 //
@@ -10,7 +10,7 @@ import Supabase
 import GoogleSignIn
 import UIKit
 
-@Observable
+@MainActor @Observable
 final class AuthService {
     static let shared = AuthService()
     
@@ -42,11 +42,9 @@ final class AuthService {
         Task { [weak self] in
             for await (event, session) in supabase.auth.authStateChanges {
                 guard [.initialSession, .signedIn, .signedOut].contains(event) else { continue }
-                await MainActor.run {
-                    self?.currentUser = session?.user
-                    self?.isSignedIn = session?.user != nil
-                    self?.isLoading = false
-                }
+                self?.currentUser = session?.user
+                self?.isSignedIn = session?.user != nil
+                self?.isLoading = false
             }
         }
     }
@@ -111,10 +109,8 @@ final class AuthService {
         try await supabase.auth.signOut()
         GIDSignIn.sharedInstance.signOut()
         GooglePhotosService.shared.isBackupEnabled = false
-        await MainActor.run {
-            self.currentUser = nil
-            self.isSignedIn = false
-        }
+        currentUser = nil
+        isSignedIn = false
     }
     
     // MARK: - Errors

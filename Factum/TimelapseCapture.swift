@@ -1,6 +1,6 @@
 //
 //  TimelapseCapture.swift
-//  Factum
+//  Pigeon
 //
 //  Records continuous video via AVCaptureMovieFileOutput during study
 //  sessions, then speeds up the raw recording into a ~30-second
@@ -9,13 +9,57 @@
 
 import AVFoundation
 import UIKit
+import CoreImage
 import CoreMotion
 import Observation
 import AudioToolbox
 
+// MARK: - Color Grade
+
+enum VideoColorGrade: String, CaseIterable, Identifiable, Sendable {
+    case none = "None"
+    case warm = "Warm"
+    case cool = "Cool"
+    case vivid = "Vivid"
+    case noir = "Noir"
+    case vintage = "Vintage"
+    case fade = "Fade"
+    case chrome = "Chrome"
+    case mono = "Mono"
+
+    var id: String { rawValue }
+
+    /// The CIFilter name to apply, or nil for no filter.
+    var ciFilterName: String? {
+        switch self {
+        case .none: return nil
+        case .warm: return "CIPhotoEffectTransfer"
+        case .cool: return "CIPhotoEffectProcess"
+        case .vivid: return "CIColorControls"
+        case .noir: return "CIPhotoEffectNoir"
+        case .vintage: return "CIPhotoEffectInstant"
+        case .fade: return "CIPhotoEffectFade"
+        case .chrome: return "CIPhotoEffectChrome"
+        case .mono: return "CIPhotoEffectMono"
+        }
+    }
+
+    /// Extra parameters for filters that need them.
+    func configure(_ filter: CIFilter) {
+        switch self {
+        case .vivid:
+            filter.setValue(1.25, forKey: kCIInputSaturationKey)
+            filter.setValue(1.05, forKey: kCIInputContrastKey)
+            filter.setValue(0.02, forKey: kCIInputBrightnessKey)
+        default:
+            break
+        }
+    }
+}
+
 // MARK: - Device Orientation (accelerometer-based)
 
-enum DeviceOrientation: String {
+enum DeviceOrientation: String, Sendable {
     case portrait = "Portrait"
     case landscapeLeft = "LandscapeLeft"    // Home button on right (device rotated left)
     case landscapeRight = "LandscapeRight"  // Home button on left (device rotated right)
@@ -48,7 +92,7 @@ enum DeviceOrientation: String {
 
 // MARK: - Recording Mode
 
-enum RecordingMode: String {
+enum RecordingMode: String, Sendable {
     case timelapse = "Timelapse"
     case photoTimer = "Photo Timer"
 }
@@ -79,7 +123,7 @@ final class PhotoCaptureDelegate: NSObject, AVCapturePhotoCaptureDelegate {
 
 // MARK: - Timer Mode
 
-enum TimerMode: String, CaseIterable, Identifiable {
+enum TimerMode: String, CaseIterable, Identifiable, Sendable {
     case continuous = "Continuous"
     case pomodoro = "Pomodoro"
     case setTime = "Set Time"
@@ -97,7 +141,7 @@ enum TimerMode: String, CaseIterable, Identifiable {
 
 // MARK: - Pomodoro State
 
-enum PomodoroPhase: String {
+enum PomodoroPhase: String, Sendable {
     case study = "Study"
     case shortBreak = "Break"
 }
@@ -120,6 +164,60 @@ final class MovieRecordingDelegate: NSObject, AVCaptureFileOutputRecordingDelega
     }
 }
 
+// MARK: - Session Snapshot (crash recovery)
+
+/// Persisted snapshot of an in-progress study session.
+/// Saved to disk periodically so interrupted sessions can be recovered.
+struct SessionSnapshot: Codable {
+    let sessionID: String
+    let startDate: Date
+    let elapsedSeconds: Int
+    let totalBreakSeconds: Int
+    let currentSubject: String
+    let subjectSegments: [SubjectSegmentSnapshot]
+    let timerMode: String
+    let isLandscape: Bool
+    let rawVideoFileName: String?
+    let savedAt: Date
+    
+    struct SubjectSegmentSnapshot: Codable {
+        let subject: String
+        let seconds: Int
+    }
+    
+    /// File URL for the snapshot (in Application Support so it's not purged like Caches).
+    static var fileURL: URL {
+        URL.applicationSupportDirectory.appending(path: "pigeon_active_session.json")
+    }
+    
+    /// Save this snapshot to disk atomically.
+    func save() {
+        do {
+            let data = try JSONEncoder().encode(self)
+            try data.write(to: Self.fileURL, options: .atomic)
+        } catch {
+            print("[SESSION] Snapshot save failed: \(error.localizedDescription)")
+        }
+    }
+    
+    /// Load a previously saved snapshot, if any.
+    static func load() -> SessionSnapshot? {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
+        guard let data = try? Data(contentsOf: fileURL) else { return nil }
+        return try? JSONDecoder().decode(SessionSnapshot.self, from: data)
+    }
+    
+    /// Delete the snapshot file (called on normal session completion or discard).
+    static func clear() {
+        try? FileManager.default.removeItem(at: fileURL)
+    }
+    
+    /// Study seconds (elapsed minus breaks).
+    var studySeconds: Int {
+        max(0, elapsedSeconds - totalBreakSeconds)
+    }
+}
+
 // MARK: - Timelapse Capture Manager
 
 @MainActor
@@ -135,6 +233,9 @@ final class TimelapseCaptureManager {
     var thumbnailImage: UIImage?
     var cameraReady = false
     
+    // MARK: Color grading
+    var colorGrade: VideoColorGrade = .none
+
     // MARK: Recording mode
     var recordingMode: RecordingMode = .timelapse
     var capturedPhoto: UIImage?
@@ -218,6 +319,9 @@ final class TimelapseCaptureManager {
     // MARK: Movie recording
     private var rawVideoURL: URL?
     private var elapsedTimer: Timer?
+    /// Continuation that resolves once the movie file output delegate fires,
+    /// guaranteeing the raw .mov file is fully written to disk.
+    private var recordingFinishedContinuation: CheckedContinuation<Void, Never>?
     
     // MARK: Wall-clock timing
     /// Actual start time — used to compute elapsed time from the wall clock
@@ -564,7 +668,7 @@ final class TimelapseCaptureManager {
         
         let sessionID = UUID().uuidString
         let docsDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
-        let rawURL = docsDir.appendingPathComponent("factum_raw_\(sessionID).mov")
+        let rawURL = docsDir.appendingPathComponent("pigeon_raw_\(sessionID).mov")
         rawVideoURL = rawURL
         
         let delegate = MovieRecordingDelegate()
@@ -574,16 +678,24 @@ final class TimelapseCaptureManager {
             }
             Task { @MainActor [weak self] in
                 self?.rawVideoURL = url
+                // Resolve any pending waitForRecordingFinished() callers
+                self?.recordingFinishedContinuation?.resume()
+                self?.recordingFinishedContinuation = nil
             }
         }
         movieRecordingDelegate = delegate
         movieOutput.startRecording(to: rawURL, recordingDelegate: delegate)
         
         elapsedTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            Task { @MainActor in
+            guard let self else { return }
+            Task { @MainActor [weak self] in
                 self?.tick()
             }
         }
+        
+        // Initial snapshot so even very short sessions are recoverable
+        snapshotTickCounter = 0
+        saveSessionSnapshot()
     }
     
     // MARK: - Photo Timer Mode
@@ -635,7 +747,8 @@ final class TimelapseCaptureManager {
         
         // No video recording — just the tick timer
         elapsedTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            Task { @MainActor in
+            guard let self else { return }
+            Task { @MainActor [weak self] in
                 self?.tick()
             }
         }
@@ -643,6 +756,10 @@ final class TimelapseCaptureManager {
         // Stop the camera session to save battery (no preview needed during timer)
         let session = captureSession
         Task.detached { session.stopRunning() }
+        
+        // Initial snapshot so even very short sessions are recoverable
+        snapshotTickCounter = 0
+        saveSessionSnapshot()
     }
     
     private func tick() {
@@ -654,6 +771,13 @@ final class TimelapseCaptureManager {
             elapsedSeconds = elapsedBeforeCurrentStart + Int(Date().timeIntervalSince(start))
         } else {
             elapsedSeconds += 1
+        }
+        
+        // Persist session state to disk every 30 seconds for crash recovery
+        snapshotTickCounter += 1
+        if snapshotTickCounter >= 30 {
+            snapshotTickCounter = 0
+            saveSessionSnapshot()
         }
         
         switch timerMode {
@@ -714,7 +838,9 @@ final class TimelapseCaptureManager {
         isRecording = false
         isPaused = false
         
-        // Stop continuous video recording
+        // Stop continuous video recording — the delegate callback will fire
+        // asynchronously once the file is fully written.  Call
+        // waitForRecordingFinished() before reading the raw file.
         if let movieOutput, movieOutput.isRecording {
             movieOutput.stopRecording()
         }
@@ -754,6 +880,8 @@ final class TimelapseCaptureManager {
         finalizeCurrentSegment()
         currentSubject = newSubject
         subjectSegmentStart = Date()
+        // Persist state immediately after subject switch
+        saveSessionSnapshot()
     }
     
     /// Returns the finalized subject segments for the completed session.
@@ -764,6 +892,35 @@ final class TimelapseCaptureManager {
         return subjectSegments
             .map { SubjectSegment(subject: $0.subject, seconds: $0.seconds) }
             .sorted { $0.seconds > $1.seconds }
+    }
+    
+    // MARK: - Session Snapshot (crash recovery)
+    
+    /// Counter used to save a snapshot every 30 ticks (~30 seconds).
+    private var snapshotTickCounter: Int = 0
+    
+    /// Persist the current session state to disk so it survives a crash or force-quit.
+    func saveSessionSnapshot() {
+        let snapshot = SessionSnapshot(
+            sessionID: rawVideoURL?.lastPathComponent ?? UUID().uuidString,
+            startDate: recordingStartDate ?? Date().addingTimeInterval(-Double(elapsedSeconds)),
+            elapsedSeconds: elapsedSeconds,
+            totalBreakSeconds: totalBreakSeconds,
+            currentSubject: currentSubject,
+            subjectSegments: subjectSegments.map {
+                SessionSnapshot.SubjectSegmentSnapshot(subject: $0.subject, seconds: $0.seconds)
+            },
+            timerMode: timerMode.rawValue,
+            isLandscape: isLandscape,
+            rawVideoFileName: rawVideoURL?.lastPathComponent,
+            savedAt: Date()
+        )
+        snapshot.save()
+    }
+    
+    /// Remove the session snapshot (called on normal session completion or discard).
+    func clearSessionSnapshot() {
+        SessionSnapshot.clear()
     }
     
     // MARK: - Pause / Resume
@@ -787,6 +944,9 @@ final class TimelapseCaptureManager {
         if let movieOutput, movieOutput.isRecording {
             movieOutput.pauseRecording()
         }
+        
+        // Persist state in case the app is killed while paused
+        saveSessionSnapshot()
     }
     
     func resumeRecording() {
@@ -805,7 +965,8 @@ final class TimelapseCaptureManager {
         // Restart the tick timer (invalidate any stale timer first)
         elapsedTimer?.invalidate()
         elapsedTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            Task { @MainActor in
+            guard let self else { return }
+            Task { @MainActor [weak self] in
                 self?.tick()
             }
         }
@@ -819,6 +980,27 @@ final class TimelapseCaptureManager {
         AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
     }
     
+    /// Waits until the movie file output delegate has fired, guaranteeing the
+    /// raw .mov file is fully flushed to disk.  Returns immediately if no
+    /// recording was in progress.
+    func waitForRecordingFinished() async {
+        // If the movie output is still recording, the delegate hasn't fired yet.
+        // Also check if the raw file doesn't exist yet (delegate sets it).
+        guard let movieOutput, !movieOutput.isRecording else {
+            // If the output isn't recording, the delegate may already have fired
+            // — but give it a tiny grace period to propagate through MainActor.
+            try? await Task.sleep(for: .milliseconds(100))
+            return
+        }
+        // If we get here, stopRecording() was called but the delegate hasn't
+        // fired yet. Wait for it with a continuation.
+        if rawVideoURL == nil || !FileManager.default.fileExists(atPath: rawVideoURL!.path) {
+            await withCheckedContinuation { continuation in
+                recordingFinishedContinuation = continuation
+            }
+        }
+    }
+    
     // MARK: - Export timelapse
     
     /// Speeds up the raw continuous recording into a ~30-second timelapse
@@ -828,6 +1010,10 @@ final class TimelapseCaptureManager {
             return existing
         }
         guard !isExporting else { return nil }
+        
+        // Wait for the movie file to be fully written before reading it.
+        await waitForRecordingFinished()
+        
         guard let rawURL = rawVideoURL,
               FileManager.default.fileExists(atPath: rawURL.path) else { return nil }
 
@@ -855,8 +1041,11 @@ final class TimelapseCaptureManager {
             thumbnailImage = UIImage(cgImage: cgImage)
         }
         
-        // Target output: 30 seconds at 30fps
-        let targetSeconds: Double = 30.0
+        // Target output: 20-30 seconds depending on raw length.
+        // Short sessions (< 10 min raw) → 20s, scaling up to 30s for longer sessions.
+        // Hard cap at 30 seconds.
+        let rawSeconds = duration.seconds
+        let targetSeconds: Double = min(30.0, max(20.0, 20.0 + (rawSeconds - 600.0) / 600.0 * 10.0))
         let targetDuration = CMTime(seconds: targetSeconds, preferredTimescale: 600)
         
         // Create composition with sped-up track
@@ -886,9 +1075,55 @@ final class TimelapseCaptureManager {
         // Scale time to target duration (this creates the timelapse effect)
         compositionTrack.scaleTimeRange(timeRange, toDuration: targetDuration)
         
+        // Create a video composition to force smooth frame output.
+        // Without this, scaleTimeRange just drops frames — a 60x speedup
+        // shows 1 frame every 2 seconds of real time, looking very choppy.
+        // The video composition re-renders at a steady 30fps, sampling
+        // uniformly from the sped-up timeline for buttery smooth output.
+        let naturalSize: CGSize
+        if let transform = try? await videoTrack.load(.preferredTransform),
+           let trackSize = try? await videoTrack.load(.naturalSize) {
+            // Apply the preferred transform to get the correct orientation
+            let transformedSize = trackSize.applying(transform)
+            naturalSize = CGSize(width: abs(transformedSize.width),
+                                 height: abs(transformedSize.height))
+        } else {
+            naturalSize = outputSize
+        }
+        
+        // Build video composition — with optional CIFilter color grading
+        let videoComposition: AVVideoComposition
+        if colorGrade != .none, let filterName = colorGrade.ciFilterName {
+            let capturedGrade = colorGrade
+            let ciFilter = CIFilter(name: filterName)!
+            capturedGrade.configure(ciFilter)
+            let handler: @Sendable (AVAsynchronousCIImageFilteringRequest) -> Void = { request in
+                ciFilter.setValue(request.sourceImage, forKey: kCIInputImageKey)
+                if let output = ciFilter.outputImage {
+                    request.finish(with: output, context: nil)
+                } else {
+                    request.finish(with: request.sourceImage, context: nil)
+                }
+            }
+            videoComposition = AVVideoComposition(asset: composition, applyingCIFiltersWithHandler: handler)
+        } else {
+            let mutableComp = AVMutableVideoComposition()
+            mutableComp.frameDuration = CMTime(value: 1, timescale: 30)
+            mutableComp.renderSize = naturalSize
+            let instruction = AVMutableVideoCompositionInstruction()
+            instruction.timeRange = CMTimeRange(start: .zero, duration: targetDuration)
+            let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: compositionTrack)
+            if let transform = try? await videoTrack.load(.preferredTransform) {
+                layerInstruction.setTransform(transform, at: .zero)
+            }
+            instruction.layerInstructions = [layerInstruction]
+            mutableComp.instructions = [instruction]
+            videoComposition = mutableComp
+        }
+        
         // Export
         let outputURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("factum_\(UUID().uuidString).mp4")
+            .appendingPathComponent("pigeon_\(UUID().uuidString).mp4")
         
         guard let exportSession = AVAssetExportSession(
             asset: composition, presetName: AVAssetExportPresetHighestQuality
@@ -896,6 +1131,7 @@ final class TimelapseCaptureManager {
             isExporting = false
             return nil
         }
+        exportSession.videoComposition = videoComposition
         
         do {
             try await exportSession.export(to: outputURL, as: .mp4)
@@ -920,6 +1156,19 @@ final class TimelapseCaptureManager {
     // MARK: - Cleanup
     
     func cleanup() {
+        cleanupInternal()
+        // Session ended normally — remove the crash recovery snapshot
+        clearSessionSnapshot()
+    }
+    
+    /// Cleanup camera resources without clearing the session snapshot.
+    /// Used when the user ends a session without posting — the snapshot
+    /// is preserved so the study time is recovered on next app launch.
+    func cleanupWithoutClearingSnapshot() {
+        cleanupInternal()
+    }
+    
+    private func cleanupInternal() {
         stopRecording()
         recordingOrientation = nil
         recordingStartDate = nil
@@ -1046,7 +1295,8 @@ final class TimelapseCaptureManager {
         
         // Restart elapsed timer
         elapsedTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            Task { @MainActor in
+            guard let self else { return }
+            Task { @MainActor [weak self] in
                 self?.tick()
             }
         }

@@ -1,6 +1,6 @@
 //
-//  FactumApp.swift
-//  Factum
+//  PigeonApp.swift
+//  Pigeon
 //
 //  Created by Max on 7/11/26.
 //
@@ -11,11 +11,15 @@ import GoogleSignIn
 import Supabase
 import SQLite3
 import AVFoundation
+import BackgroundTasks
 
 @main
-struct FactumApp: App {
+struct PigeonApp: App {
     let sharedModelContainer: ModelContainer
     @State private var deepLinkTimelapseID: String?
+    @Environment(\.scenePhase) private var scenePhase
+    
+    private static let bgSyncTaskID = "com.pigeon.sync"
     
     init() {
         // Allow background music to keep playing during video playback.
@@ -31,7 +35,7 @@ struct FactumApp: App {
             // Fresh install — clear any stale Keychain session so the user
             // sees onboarding. This runs synchronously before any UI appears.
             defaults.set(true, forKey: "hasLaunchedBefore")
-            Task {
+            Task { @MainActor in
                 try? await supabase.auth.signOut()
                 GIDSignIn.sharedInstance.signOut()
             }
@@ -40,7 +44,6 @@ struct FactumApp: App {
         let schema = Schema([
             UserProfile.self,
             StudyTimelapse.self,
-            TimelapseComment.self,
             StudyGroup.self,
             StudySubject.self,
         ])
@@ -60,20 +63,31 @@ struct FactumApp: App {
             sharedModelContainer = try ModelContainer(for: schema, configurations: [config])
         } catch {
             // Try patching the store — add any missing columns
-            print("[FACTUM] Migration failed, attempting column patch: \(error)")
+            print("[PIGEON] Migration failed, attempting column patch: \(error)")
             Self.patchStoreIfNeeded(at: storeURL)
             
             // Retry after patching
             do {
                 let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
                 sharedModelContainer = try ModelContainer(for: schema, configurations: [config])
-                print("[FACTUM] Migration succeeded after patching columns")
+                print("[PIGEON] Migration succeeded after patching columns")
             } catch {
                 // DO NOT delete the store. The backup is preserved so data can
                 // be recovered manually. Crash so the user notices immediately
                 // rather than silently losing data.
-                fatalError("[FACTUM] Migration failed even after patching. Backup preserved at default.store.backup. Error: \(error)")
+                fatalError("[PIGEON] Migration failed even after patching. Backup preserved at default.store.backup. Error: \(error)")
             }
+        }
+        
+        // Register background sync task so unsynced sessions upload
+        // even if the user doesn't return to the app for a while.
+        let container = sharedModelContainer
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: Self.bgSyncTaskID, using: nil) { task in
+            guard let refreshTask = task as? BGAppRefreshTask else {
+                task.setTaskCompleted(success: true)
+                return
+            }
+            Self.handleBackgroundSync(refreshTask, container: container)
         }
     }
 
@@ -91,8 +105,8 @@ struct FactumApp: App {
                     resetDataIfNeeded()
                 }
                 .onOpenURL { url in
-                    // Handle factum:// deep links
-                    if url.scheme == "factum", url.host == "post",
+                    // Handle pigeon:// deep links
+                    if url.scheme == "pigeon", url.host == "post",
                        let id = url.pathComponents.dropFirst().first {
                         deepLinkTimelapseID = id
                         return
@@ -102,6 +116,11 @@ struct FactumApp: App {
                 }
         }
         .modelContainer(sharedModelContainer)
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .background {
+                Self.scheduleBackgroundSync()
+            }
+        }
     }
     
     /// Creates a backup copy of the SQLite store before any migration attempt.
@@ -131,9 +150,9 @@ struct FactumApp: App {
                     try fm.copyItem(at: walURL, to: walBackupURL)
                 }
             }
-            print("[FACTUM] Database backed up (\(fileSize / 1024)KB)")
+            print("[PIGEON] Database backed up (\(fileSize / 1024)KB)")
         } catch {
-            print("[FACTUM] Backup failed: \(error.localizedDescription)")
+            print("[PIGEON] Backup failed: \(error.localizedDescription)")
         }
     }
     
@@ -155,6 +174,11 @@ struct FactumApp: App {
             ("ZSTUDYTIMELAPSE", "ZGOOGLEPHOTOSBACKEDUP", "INTEGER", "0"),
             ("ZSTUDYTIMELAPSE", "ZVIDEODOWNLOADURL", "VARCHAR", "NULL"),
             ("ZSTUDYTIMELAPSE", "ZTHUMBNAILDOWNLOADURL", "VARCHAR", "NULL"),
+            ("ZUSERPROFILE", "ZUSERNAME", "VARCHAR", "NULL"),
+            ("ZSTUDYTIMELAPSE", "ZCLOUDSYNCED", "INTEGER", "0"),
+            ("ZUSERPROFILE", "ZISPRIVATE", "INTEGER", "1"),
+            ("ZSTUDYTIMELAPSE", "ZSYNCRETRYCOUNT", "INTEGER", "0"),
+            ("ZSTUDYTIMELAPSE", "ZLASTSYNCATTEMPT", "TIMESTAMP", "NULL"),
         ]
         
         for patch in patches {
@@ -162,7 +186,50 @@ struct FactumApp: App {
             // Silently ignore errors (column already exists)
             sqlite3_exec(db, sql, nil, nil, nil)
         }
-        print("[FACTUM] Schema patch applied (\(patches.count) columns checked)")
+        
+        // StudyGroup changed creatorID/memberIDs from UUID to String.
+        // SwiftData can't migrate column types, so drop and recreate the table
+        // (no production data exists in this table).
+        sqlite3_exec(db, "DROP TABLE IF EXISTS ZSTUDYGROUP", nil, nil, nil)
+        
+        print("[PIGEON] Schema patch applied (\(patches.count) columns checked)")
+    }
+    
+    /// Schedules a background app refresh task so iOS can wake the app
+    /// to upload any sessions with `cloudSynced == false`.
+    private static func scheduleBackgroundSync() {
+        let request = BGAppRefreshTaskRequest(identifier: bgSyncTaskID)
+        // Ask iOS to run within the next 15 minutes (system decides actual timing)
+        request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
+        do {
+            try BGTaskScheduler.shared.submit(request)
+            print("[BG] Background sync task scheduled")
+        } catch {
+            print("[BG] Failed to schedule background sync: \(error.localizedDescription)")
+        }
+    }
+    
+    /// Handles the background sync task: uploads unsynced sessions to Supabase.
+    private static func handleBackgroundSync(_ task: BGAppRefreshTask, container: ModelContainer) {
+        // Schedule the next occurrence so this keeps repeating
+        scheduleBackgroundSync()
+        
+        let syncTask = Task { @MainActor in
+            let uid = AuthService.shared.currentUserID
+            guard !uid.isEmpty else { return }
+            let context = container.mainContext
+            await SyncManager.shared.retryUnsyncedSessions(uid: uid, context: context)
+        }
+        
+        // If the system needs to reclaim resources, cancel gracefully
+        task.expirationHandler = {
+            syncTask.cancel()
+        }
+        
+        Task {
+            await syncTask.value
+            task.setTaskCompleted(success: true)
+        }
     }
     
     private func resetDataIfNeeded() {
@@ -172,38 +239,57 @@ struct FactumApp: App {
         
         let context = sharedModelContainer.mainContext
         
-        // SAFETY: Upload all sessions to Supabase before deleting anything locally
-        Task {
+        // SAFETY: Upload ALL sessions to Supabase before deleting anything locally.
+        // Every upload must succeed — if any fail, abort the reset to prevent data loss.
+        Task { @MainActor in
             let descriptor = FetchDescriptor<StudyTimelapse>()
             let allTimelapses = (try? context.fetch(descriptor)) ?? []
+            
+            var failedUploads = 0
             for timelapse in allTimelapses {
-                try? await SupabaseService.shared.saveTimelapse(timelapse)
+                do {
+                    try await SupabaseService.shared.saveTimelapse(timelapse)
+                } catch {
+                    failedUploads += 1
+                    print("[RESET] Failed to back up session \(timelapse.id.uuidString.prefix(8)): \(error.localizedDescription)")
+                }
             }
-            print("[RESET] Backed up \(allTimelapses.count) sessions to Supabase before reset")
+            
+            // Abort reset if any uploads failed — data would be lost
+            if failedUploads > 0 {
+                print("[RESET] ABORTED: \(failedUploads)/\(allTimelapses.count) sessions failed to upload. Re-queuing reset for next launch.")
+                defaults.set(true, forKey: "pendingDataReset")
+                return
+            }
+            
+            print("[RESET] All \(allTimelapses.count) sessions backed up to Supabase")
             
             // Also back up user profile
             let uid = AuthService.shared.currentUserID
             let userDescriptor = FetchDescriptor<UserProfile>(predicate: #Predicate { $0.firebaseUID == uid })
             if let profile = try? context.fetch(userDescriptor).first {
-                try? await SupabaseService.shared.saveUserProfile(profile)
+                do {
+                    try await SupabaseService.shared.saveUserProfile(profile)
+                } catch {
+                    print("[RESET] ABORTED: Profile backup failed. Re-queuing reset for next launch.")
+                    defaults.set(true, forKey: "pendingDataReset")
+                    return
+                }
             }
             
             // Sign out
             try? await AuthService.shared.signOut()
             
-            // Now safe to delete local records — cloud has the backup
-            await MainActor.run {
-                do {
-                    try context.delete(model: UserProfile.self)
-                    try context.delete(model: StudyTimelapse.self)
-                    try context.delete(model: TimelapseComment.self)
-                    try context.delete(model: StudyGroup.self)
-                    try context.delete(model: StudySubject.self)
-                    try context.save()
-                    print("[RESET] Local data cleared (cloud backup preserved)")
-                } catch {
-                    print("[RESET] Failed to reset data: \(error)")
-                }
+            // Now safe to delete local records — cloud has confirmed backups
+            do {
+                try context.delete(model: UserProfile.self)
+                try context.delete(model: StudyTimelapse.self)
+                try context.delete(model: StudyGroup.self)
+                try context.delete(model: StudySubject.self)
+                try context.save()
+                print("[RESET] Local data cleared (cloud backup preserved)")
+            } catch {
+                print("[RESET] Failed to reset data: \(error)")
             }
         }
     }

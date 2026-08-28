@@ -1,6 +1,6 @@
 //
 //  ContentModerationService.swift
-//  Factum
+//  Pigeon
 //
 //  On-device content moderation to ensure all posts are SFW.
 //  Uses SensitiveContentAnalysis for nudity detection (when available)
@@ -12,25 +12,23 @@ import UIKit
 import Vision
 import SensitiveContentAnalysis
 
-enum ContentModerationResult {
+enum ContentModerationResult: Sendable {
     case safe
     case flagged(reason: String)
 }
 
 actor ContentModerationService {
     static let shared = ContentModerationService()
-    
-    // MARK: - Text Moderation
-    
-    /// Checks caption and description text for explicit/inappropriate content.
-    func checkText(_ texts: [String]) -> ContentModerationResult {
-        let blockedPatterns: [String] = [
+
+    /// Pre-compiled regex patterns for text moderation (built once, reused per check).
+    private static let blockedRegexes: [NSRegularExpression] = {
+        let patterns = [
             "\\bnude\\b", "\\bnudes\\b", "\\bnudity\\b",
             "\\bnsfw\\b",
             "\\bporn\\b", "\\bporno\\b", "\\bpornography\\b",
             "\\bxxx\\b",
             "\\bhentai\\b",
-            "\\bsex\\b(?!ton)",  // "sex" but not "sexton"
+            "\\bsex\\b(?!ton)",
             "\\bsexy\\b",
             "\\berotic\\b",
             "\\bexplicit\\b",
@@ -39,7 +37,7 @@ actor ContentModerationService {
             "\\bshit\\b", "\\bshitty\\b",
             "\\bass\\b", "\\basshole\\b",
             "\\bbitch\\b",
-            "\\bdick\\b(?!ens)",  // "dick" but not "dickens"
+            "\\bdick\\b(?!ens)",
             "\\bcock\\b",
             "\\bslut\\b",
             "\\bwhore\\b",
@@ -47,15 +45,19 @@ actor ContentModerationService {
             "\\bnigger\\b", "\\bnigga\\b",
             "\\bfag\\b", "\\bfaggot\\b",
         ]
-        
+        return patterns.compactMap { try? NSRegularExpression(pattern: $0, options: .caseInsensitive) }
+    }()
+
+    // MARK: - Text Moderation
+    
+    /// Checks caption and description text for explicit/inappropriate content.
+    func checkText(_ texts: [String]) -> ContentModerationResult {
         let combined = texts.joined(separator: " ").lowercased()
+        let range = NSRange(combined.startIndex..., in: combined)
         
-        for pattern in blockedPatterns {
-            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
-                let range = NSRange(combined.startIndex..., in: combined)
-                if regex.firstMatch(in: combined, range: range) != nil {
-                    return .flagged(reason: "Your text contains inappropriate language. Please revise before posting.")
-                }
+        for regex in Self.blockedRegexes {
+            if regex.firstMatch(in: combined, range: range) != nil {
+                return .flagged(reason: "Your text contains inappropriate language. Please revise before posting.")
             }
         }
         

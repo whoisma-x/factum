@@ -1,6 +1,6 @@
 //
 //  PostCaptionView.swift
-//  Factum
+//  Pigeon
 //
 //  Post-timelapse caption and description entry
 //
@@ -17,6 +17,7 @@ struct PostCaptionView: View {
     var capturedPhotos: [UIImage] = []
     var subjectSegments: [SubjectSegment] = []
     var appLeaveCount: Int = 0
+    var offTaskSeconds: Int = 0
     let onComplete: () -> Void
     var onDiscard: (() -> Void)? = nil
     
@@ -28,12 +29,11 @@ struct PostCaptionView: View {
     @State private var isCheckingContent = false
     @State private var showContentWarning = false
     @State private var contentWarningMessage = ""
-    @State private var savedToPhotos = false
-    @State private var isSavingToPhotos = false
     @State private var currentPhotoIndex = 0
     @State private var showDiscardConfirm = false
-    @State private var showInstagramNotInstalled = false
-    @State private var showStoryStyleSheet = false
+    @State private var showExportOverlay = false
+    @State private var showVideoEditor = false
+    @State private var editedVideoURL: URL? = nil
     @FocusState private var focusedField: Field?
     @Query private var users: [UserProfile]
     @Query(sort: \StudySubject.sortOrder) private var subjects: [StudySubject]
@@ -55,6 +55,11 @@ struct PostCaptionView: View {
         case caption, description
     }
     
+    /// Video URL — uses edited version if available, otherwise original
+    private var effectiveVideoURL: URL? {
+        editedVideoURL ?? videoURL
+    }
+    
     /// Primary subject — the one with the most time from segments
     private var primarySubjectName: String {
         subjectSegments.first?.subject ?? "General"
@@ -68,31 +73,31 @@ struct PostCaptionView: View {
                     HStack(spacing: 16) {
                         ZStack {
                             RoundedRectangle(cornerRadius: 12)
-                                .fill(FactumTheme.surfaceBackground)
+                                .fill(PigeonTheme.surfaceBackground)
                                 .frame(width: 100, height: 75)
                             
                             VStack(spacing: 4) {
                                 Image(systemName: videoURL != nil ? "timelapse" : (!capturedPhotos.isEmpty ? "camera.fill" : "timer"))
                                     .font(.system(size: 24))
-                                    .foregroundStyle(FactumTheme.secondaryText)
+                                    .foregroundStyle(PigeonTheme.secondaryText)
                                 Text(formatDuration(durationSeconds))
-                                    .font(FactumTheme.font(12, weight: .semibold))
-                                    .foregroundStyle(FactumTheme.primaryText)
+                                    .font(PigeonTheme.font(12, weight: .semibold))
+                                    .foregroundStyle(PigeonTheme.primaryText)
                             }
                         }
                         
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Study Session Complete")
-                                .font(FactumTheme.subheadlineFont)
-                                .foregroundStyle(FactumTheme.primaryText)
+                                .font(PigeonTheme.subheadlineFont)
+                                .foregroundStyle(PigeonTheme.primaryText)
                             Text("Add details about your session")
-                                .font(FactumTheme.captionFont)
-                                .foregroundStyle(FactumTheme.secondaryText)
+                                .font(PigeonTheme.captionFont)
+                                .foregroundStyle(PigeonTheme.secondaryText)
                         }
                     }
                     .padding(16)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(FactumTheme.cardBackground)
+                    .background(PigeonTheme.cardBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 16))
                     
                     // Photo preview carousel
@@ -116,53 +121,77 @@ struct PostCaptionView: View {
                             if capturedPhotos.count > 1 {
                                 HStack(spacing: 16) {
                                     Text("Before")
-                                        .font(FactumTheme.font(12, weight: currentPhotoIndex == 0 ? .bold : .medium))
-                                        .foregroundStyle(currentPhotoIndex == 0 ? FactumTheme.primaryText : FactumTheme.tertiaryText)
+                                        .font(PigeonTheme.font(12, weight: currentPhotoIndex == 0 ? .bold : .medium))
+                                        .foregroundStyle(currentPhotoIndex == 0 ? PigeonTheme.primaryText : PigeonTheme.tertiaryText)
                                     Text("After")
-                                        .font(FactumTheme.font(12, weight: currentPhotoIndex == 1 ? .bold : .medium))
-                                        .foregroundStyle(currentPhotoIndex == 1 ? FactumTheme.primaryText : FactumTheme.tertiaryText)
+                                        .font(PigeonTheme.font(12, weight: currentPhotoIndex == 1 ? .bold : .medium))
+                                        .foregroundStyle(currentPhotoIndex == 1 ? PigeonTheme.primaryText : PigeonTheme.tertiaryText)
                                 }
                             }
                         }
                     }
                     
+                    // Edit Video button
+                    if let url = effectiveVideoURL, UIVideoEditorController.canEditVideo(atPath: url.path) {
+                        Button {
+                            Haptics.light()
+                            showVideoEditor = true
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "scissors")
+                                    .font(.system(size: 16))
+                                Text("Edit Video")
+                                    .font(PigeonTheme.subheadlineFont)
+                            }
+                            .foregroundStyle(PigeonTheme.primaryText)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(PigeonTheme.cardBackground)
+                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14)
+                                    .strokeBorder(PigeonTheme.separator, lineWidth: 1)
+                            )
+                        }
+                    }
+
                     // Caption
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Caption")
-                            .font(FactumTheme.subheadlineFont)
-                            .foregroundStyle(FactumTheme.primaryText)
+                            .font(PigeonTheme.subheadlineFont)
+                            .foregroundStyle(PigeonTheme.primaryText)
                         
                         TextField("e.g. late night grind session", text: $caption)
-                            .font(FactumTheme.bodyFont)
-                            .foregroundStyle(FactumTheme.primaryText)
+                            .font(PigeonTheme.bodyFont)
+                            .foregroundStyle(PigeonTheme.primaryText)
                             .focused($focusedField, equals: .caption)
                             .padding(14)
-                            .background(FactumTheme.cardBackground)
+                            .background(PigeonTheme.cardBackground)
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
                     
                     // Description
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Description")
-                            .font(FactumTheme.subheadlineFont)
-                            .foregroundStyle(FactumTheme.primaryText)
+                            .font(PigeonTheme.subheadlineFont)
+                            .foregroundStyle(PigeonTheme.primaryText)
                         
                         ZStack(alignment: .topLeading) {
                             TextEditor(text: $studyDescription)
-                                .font(FactumTheme.bodyFont)
-                                .foregroundStyle(FactumTheme.primaryText)
+                                .font(PigeonTheme.bodyFont)
+                                .foregroundStyle(PigeonTheme.primaryText)
                                 .focused($focusedField, equals: .description)
                                 .scrollContentBackground(.hidden)
                                 .frame(minHeight: 120)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 8)
-                                .background(FactumTheme.cardBackground)
+                                .background(PigeonTheme.cardBackground)
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
                             
                             if studyDescription.isEmpty {
                                 Text("what did you study? any breakthroughs?")
-                                    .font(FactumTheme.bodyFont)
-                                    .foregroundStyle(FactumTheme.tertiaryText)
+                                    .font(PigeonTheme.bodyFont)
+                                    .foregroundStyle(PigeonTheme.tertiaryText)
                                     .padding(.horizontal, 15)
                                     .padding(.vertical, 16)
                                     .allowsHitTesting(false)
@@ -175,69 +204,39 @@ struct PostCaptionView: View {
                         Task { await postTimelapse() }
                     } label: {
                         Text(isCheckingContent ? "Checking content..." : (isPosting ? "Saving..." : "Share Session"))
-                            .font(FactumTheme.subheadlineFont)
-                            .foregroundStyle(FactumTheme.accentText)
+                            .font(PigeonTheme.subheadlineFont)
+                            .foregroundStyle(PigeonTheme.accentText)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 16)
                             .background(
                                 (caption.isEmpty || isPosting || isCheckingContent)
-                                ? FactumTheme.elevated
-                                : FactumTheme.accent
+                                ? PigeonTheme.elevated
+                                : PigeonTheme.accent
                             )
                             .clipShape(RoundedRectangle(cornerRadius: 14))
                     }
                     .disabled(caption.isEmpty || isPosting || isCheckingContent)
                     .padding(.top, 8)
 
-                    // Save to Camera Roll
-                    if videoURL != nil || !capturedPhotos.isEmpty {
-                        Button {
-                            Haptics.light()
-                            Task { await saveToPhotos() }
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: savedToPhotos ? "checkmark.circle.fill" : "square.and.arrow.down")
-                                    .font(.system(size: 16))
-                                let saveLabel = videoURL != nil ? "Save to Camera Roll" : "Save Photo to Camera Roll"
-                                Text(savedToPhotos ? "Saved to Camera Roll" : (isSavingToPhotos ? "Saving..." : saveLabel))
-                                    .font(FactumTheme.subheadlineFont)
-                            }
-                            .foregroundStyle(savedToPhotos ? .green : FactumTheme.primaryText)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 16)
-                            .background(FactumTheme.cardBackground)
-                            .clipShape(RoundedRectangle(cornerRadius: 14))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 14)
-                                    .strokeBorder(FactumTheme.separator, lineWidth: 1)
-                            )
-                        }
-                        .disabled(savedToPhotos || isSavingToPhotos)
-                    }
-
-                    // Share to Instagram Story
+                    // Export & Share — unified export screen
                     Button {
                         Haptics.light()
-                        guard InstagramStoriesSharer.isInstagramInstalled else {
-                            showInstagramNotInstalled = true
-                            return
-                        }
-                        showStoryStyleSheet = true
+                        showExportOverlay = true
                     } label: {
                         HStack(spacing: 8) {
-                            Image(systemName: "camera.fill")
+                            Image(systemName: "square.and.arrow.up")
                                 .font(.system(size: 16))
-                            Text("Share to Instagram Story")
-                                .font(FactumTheme.subheadlineFont)
+                            Text("Export & Share")
+                                .font(PigeonTheme.subheadlineFont)
                         }
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .foregroundStyle(PigeonTheme.primaryText)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 16)
-                        .background(FactumTheme.cardBackground)
+                        .background(PigeonTheme.cardBackground)
                         .clipShape(RoundedRectangle(cornerRadius: 14))
                         .overlay(
                             RoundedRectangle(cornerRadius: 14)
-                                .strokeBorder(FactumTheme.separator, lineWidth: 1)
+                                .strokeBorder(PigeonTheme.separator, lineWidth: 1)
                         )
                     }
                 }
@@ -245,13 +244,13 @@ struct PostCaptionView: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .onTapGesture { focusedField = nil }
-            .background(FactumTheme.background)
+            .background(PigeonTheme.background)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     Text("New Post")
-                        .font(FactumTheme.headlineFont)
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .font(PigeonTheme.headlineFont)
+                        .foregroundStyle(PigeonTheme.primaryText)
                 }
                 ToolbarItem(placement: .cancellationAction) {
                     // Go back to the paused timer/timelapse
@@ -262,8 +261,8 @@ struct PostCaptionView: View {
                             dismiss()
                         }
                     }
-                    .foregroundStyle(FactumTheme.secondaryText)
-                    .font(FactumTheme.bodyFont)
+                    .foregroundStyle(PigeonTheme.secondaryText)
+                    .font(PigeonTheme.bodyFont)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     // Exit to main feed without posting
@@ -273,50 +272,99 @@ struct PostCaptionView: View {
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                             .font(.system(size: 20))
-                            .foregroundStyle(FactumTheme.secondaryText)
+                            .foregroundStyle(PigeonTheme.secondaryText)
                     }
                 }
             }
-            .toolbarBackground(FactumTheme.background, for: .navigationBar)
+            .toolbarBackground(PigeonTheme.background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
             .alert("Content Warning", isPresented: $showContentWarning) {
                 Button("OK", role: .cancel) { }
             } message: {
                 Text(contentWarningMessage)
             }
-            .alert("Discard Session?", isPresented: $showDiscardConfirm) {
-                Button("Discard", role: .destructive) {
-                    onComplete()
+            .alert("Skip posting?", isPresented: $showDiscardConfirm) {
+                Button("Save without posting", role: .destructive) {
+                    // Save the session record locally and sync to cloud even if the
+                    // user doesn't want to write a caption. Study time is never lost.
+                    Task { await saveAndDismiss() }
                 }
                 Button("Cancel", role: .cancel) { }
             } message: {
-                Text("Your study session won't be saved. Are you sure you want to discard it?")
+                Text("Your study time will still be saved to your history.")
             }
-            .alert("Instagram Not Found", isPresented: $showInstagramNotInstalled) {
-                Button("OK", role: .cancel) { }
-            } message: {
-                Text("Install Instagram to share your study stats to your Story.")
-            }
-            .fullScreenCover(isPresented: $showStoryStyleSheet) {
+            .fullScreenCover(isPresented: $showExportOverlay) {
                 let color = StudySubject.color(for: primarySubjectName, in: subjects)
                 let colorResolver: (String) -> Color = { name in
                     StudySubject.color(for: name, in: subjects)
                 }
-                StickerCanvasView(
+                TimelapseExportView(
+                    thumbnailData: thumbnailData,
+                    videoURL: effectiveVideoURL,
                     durationSeconds: durationSeconds,
                     subjectName: primarySubjectName,
                     subjectColor: color,
-                    appLeaveCount: appLeaveCount,
+                    date: Date(),
                     caption: caption,
-                    studyDescription: studyDescription,
+                    appLeaveCount: appLeaveCount,
                     subjectSegments: subjectSegments,
-                    subjectColorResolver: colorResolver,
-                    videoURL: videoURL,
-                    onExport: {}
+                    subjectColorResolver: colorResolver
                 )
             }
+            .fullScreenCover(isPresented: $showVideoEditor) {
+                if let url = effectiveVideoURL {
+                    VideoEditorView(videoURL: url) { editedURL in
+                        self.editedVideoURL = editedURL
+                    }
+                    .ignoresSafeArea()
+                }
+            }
         }
-        .presentationBackground(FactumTheme.background)
+        .presentationBackground(PigeonTheme.background)
+    }
+    
+    /// Save the session to history without requiring a caption, then dismiss.
+    /// Ensures study time is never lost even if the user skips posting.
+    @MainActor
+    private func saveAndDismiss() async {
+        let uid = AuthService.shared.currentUserID
+        let effectiveThumbnail = thumbnailData ?? capturedPhotos.first?.jpegData(compressionQuality: 0.8)
+        
+        let timelapse = StudyTimelapse(
+            authorID: uid,
+            authorName: currentUserName,
+            authorAvatarURL: currentUserAvatarURL,
+            caption: "",
+            studyDescription: "",
+            subject: primarySubjectName,
+            durationSeconds: durationSeconds,
+            videoFileName: effectiveVideoURL?.lastPathComponent,
+            thumbnailData: effectiveThumbnail,
+            isLandscape: isLandscape
+        )
+        timelapse.appLeaveCount = appLeaveCount
+        timelapse.offTaskSeconds = offTaskSeconds
+        if subjectSegments.count > 1 {
+            timelapse.subjectSegments = subjectSegments
+        }
+        modelContext.insert(timelapse)
+        if let user = users.first(where: { $0.firebaseUID == uid }) {
+            user.totalStudyMinutes += durationSeconds / 60
+        }
+        
+        for attempt in 1...3 {
+            do {
+                try modelContext.save()
+                break
+            } catch {
+                print("[SAVE] Save attempt \(attempt) failed: \(error.localizedDescription)")
+            }
+        }
+        
+        // Sync to cloud
+        SyncManager.shared.uploadSession(timelapse, videoURL: effectiveVideoURL, context: modelContext)
+        
+        onComplete()
     }
     
     @MainActor
@@ -375,12 +423,13 @@ struct PostCaptionView: View {
             studyDescription: studyDescription,
             subject: primarySubjectName,
             durationSeconds: durationSeconds,
-            videoFileName: videoURL?.lastPathComponent,
+            videoFileName: effectiveVideoURL?.lastPathComponent,
             thumbnailData: effectiveThumbnail,
             isLandscape: isLandscape
         )
         timelapse.afterPhotoData = afterData
         timelapse.appLeaveCount = appLeaveCount
+        timelapse.offTaskSeconds = offTaskSeconds
         if subjectSegments.count > 1 {
             timelapse.subjectSegments = subjectSegments
         }
@@ -390,72 +439,42 @@ struct PostCaptionView: View {
             user.totalStudyMinutes += durationSeconds / 60
         }
         
-        // Save locally
-        try? modelContext.save()
-        
-        // Capture values needed for background tasks
-        let capturedVideoURL = videoURL
-        let capturedSubjectName = primarySubjectName
-        let capturedCaption = caption
-        let capturedTimelapse = timelapse
-        let capturedUser = users.first(where: { $0.firebaseUID == uid })
-        let ctx = modelContext
-        
-        // Upload session record + media to Supabase so data is always backed up
-        Task.detached {
-            let uid = capturedTimelapse.authorID
-            let timelapseID = capturedTimelapse.id.uuidString
-            
-            // 1. Upload thumbnail to Supabase Storage
-            if let thumbData = capturedTimelapse.thumbnailData {
-                do {
-                    let thumbURL = try await StorageService.shared.uploadThumbnail(
-                        data: thumbData, userUID: uid, timelapseID: timelapseID
-                    )
-                    await MainActor.run {
-                        capturedTimelapse.thumbnailDownloadURL = thumbURL
-                        try? ctx.save()
-                    }
-                } catch {
-                    print("[SYNC] Thumbnail upload failed: \(error.localizedDescription)")
-                }
-            }
-            
-            // 2. Upload video to Supabase Storage (if exists)
-            if let videoURL = capturedVideoURL {
-                do {
-                    let videoDownloadURL = try await StorageService.shared.uploadVideo(
-                        localURL: videoURL, userUID: uid, timelapseID: timelapseID
-                    )
-                    await MainActor.run {
-                        capturedTimelapse.videoDownloadURL = videoDownloadURL
-                        try? ctx.save()
-                    }
-                } catch {
-                    print("[SYNC] Video upload failed: \(error.localizedDescription)")
-                }
-            }
-            
-            // 3. Save the timelapse record to Supabase (with any uploaded URLs)
+        // Save locally — retry up to 3 times to ensure the session is never lost
+        for attempt in 1...3 {
             do {
-                try await SupabaseService.shared.saveTimelapse(capturedTimelapse)
-                print("[SYNC] Timelapse record saved to Supabase")
+                try modelContext.save()
+                break
             } catch {
-                print("[SYNC] Timelapse record save failed: \(error.localizedDescription)")
-            }
-            
-            // 4. Sync updated user stats
-            if let user = capturedUser {
-                try? await SupabaseService.shared.saveUserProfile(user)
+                print("[SAVE] Local save attempt \(attempt) failed: \(error.localizedDescription)")
+                if attempt == 3 {
+                    print("[SAVE] WARNING: Local save failed after 3 attempts — session will be in-memory only until next save")
+                }
             }
         }
         
+        // Capture values needed for background tasks
+        let capturedVideoURL = effectiveVideoURL
+        let capturedSubjectName = primarySubjectName
+        let capturedCaption = caption
+        let capturedTimelapse = timelapse
+        let ctx = modelContext
+        
+        // Upload session record + media to Supabase with automatic retries.
+        // SyncManager handles exponential backoff and will retry on foreground
+        // if the initial attempts fail, ensuring data is never lost.
+        SyncManager.shared.uploadSession(
+            capturedTimelapse,
+            videoURL: capturedVideoURL,
+            context: ctx
+        )
+        
         // Google Photos backup (optional, user-controlled — independent of Supabase)
+        let isBackupEnabled = GooglePhotosService.shared.isBackupEnabled
         Task.detached {
-            if GooglePhotosService.shared.isBackupEnabled, let videoURL = capturedVideoURL {
+            if isBackupEnabled, let videoURL = capturedVideoURL {
                 do {
                     let fileName = videoURL.lastPathComponent
-                    let desc = "Factum: \(capturedSubjectName) — \(capturedCaption)"
+                    let desc = "Pigeon: \(capturedSubjectName) — \(capturedCaption)"
                     try await GooglePhotosService.shared.uploadVideo(
                         localURL: videoURL,
                         fileName: fileName,
@@ -475,37 +494,6 @@ struct PostCaptionView: View {
         onComplete()
     }
     
-    @MainActor
-    private func saveToPhotos() async {
-        guard videoURL != nil || !capturedPhotos.isEmpty else { return }
-        isSavingToPhotos = true
-
-        let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
-        guard status == .authorized || status == .limited else {
-            isSavingToPhotos = false
-            return
-        }
-
-        do {
-            try await PHPhotoLibrary.shared().performChanges {
-                if let videoURL {
-                    PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: videoURL)
-                } else {
-                    for photo in capturedPhotos {
-                        if let data = photo.jpegData(compressionQuality: 0.95) {
-                            let request = PHAssetCreationRequest.forAsset()
-                            request.addResource(with: .photo, data: data, options: nil)
-                        }
-                    }
-                }
-            }
-            savedToPhotos = true
-        } catch {
-            print("[SAVE] Failed to save to Camera Roll: \(error.localizedDescription)")
-        }
-        isSavingToPhotos = false
-    }
-
     private func formatDuration(_ seconds: Int) -> String {
         let h = seconds / 3600
         let m = (seconds % 3600) / 60
@@ -516,6 +504,54 @@ struct PostCaptionView: View {
             return String(format: "%dm %ds", m, s)
         }
         return String(format: "%ds", s)
+    }
+}
+
+// MARK: - Video Editor (UIVideoEditorController wrapper)
+
+struct VideoEditorView: UIViewControllerRepresentable {
+    let videoURL: URL
+    let onSave: (URL) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onSave: onSave, dismiss: dismiss)
+    }
+
+    func makeUIViewController(context: Context) -> UIVideoEditorController {
+        let editor = UIVideoEditorController()
+        editor.videoPath = videoURL.path
+        editor.videoQuality = .typeHigh
+        editor.delegate = context.coordinator
+        return editor
+    }
+
+    func updateUIViewController(_ uiViewController: UIVideoEditorController, context: Context) {}
+
+    class Coordinator: NSObject, UIVideoEditorControllerDelegate, UINavigationControllerDelegate {
+        let onSave: (URL) -> Void
+        let dismiss: DismissAction
+
+        init(onSave: @escaping (URL) -> Void, dismiss: DismissAction) {
+            self.onSave = onSave
+            self.dismiss = dismiss
+        }
+
+        func videoEditorController(_ editor: UIVideoEditorController, didSaveEditedVideoToPath editedVideoPath: String) {
+            let editedURL = URL(fileURLWithPath: editedVideoPath)
+            onSave(editedURL)
+            dismiss()
+        }
+
+        func videoEditorControllerDidCancel(_ editor: UIVideoEditorController) {
+            dismiss()
+        }
+
+        func videoEditorController(_ editor: UIVideoEditorController, didFailWithError error: any Error) {
+            print("[VIDEO EDITOR] Failed: \(error.localizedDescription)")
+            dismiss()
+        }
     }
 }
 

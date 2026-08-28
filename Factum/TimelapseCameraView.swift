@@ -1,6 +1,6 @@
 //
 //  TimelapseCameraView.swift
-//  Factum
+//  Pigeon
 //
 //  Timelapse recording with Pomodoro, set time, and continuous modes.
 //  Supports wide-angle cameras and zoom control.
@@ -9,12 +9,13 @@
 import SwiftUI
 import SwiftData
 import AVFoundation
+import ActivityKit
 import CallKit
 import UserNotifications
 
 // MARK: - Camera Phase
 
-enum CameraPhase {
+enum CameraPhase: Sendable {
     case timerSetup      // Pick timer mode + settings
     case cameraSetup     // Position camera, adjust zoom/flip
     case recording       // Active recording with timer display
@@ -22,6 +23,17 @@ enum CameraPhase {
     case photoConfirm    // Confirm photo, tap "Start Timer"
     case timerRunning    // Timer-only display, no camera preview (photo timer mode)
     case photoAfter      // Take a photo after timer ends
+}
+
+// MARK: - Unlock Animation Styles
+
+enum UnlockAnimStyle: CaseIterable, Sendable {
+    case pigeonFly       // Pigeon flies across and carries the lock away
+    case lockShatter     // Lock shatters into pieces
+    case lockMelt        // Lock melts downward
+    case keyTurn         // Key inserts and turns
+    case lockShrink      // Lock shrinks and pops
+    case pigeonPeck      // Pigeon pecks the lock apart
 }
 
 // MARK: - Camera View
@@ -45,12 +57,10 @@ struct TimelapseCameraView: View {
     @State private var customHours = 1
     @State private var customMinutes = 0
 
-    // Screen dimming during recording
+    // Screen dimming during recording (visual overlay only — never touches hardware brightness)
     @AppStorage("autoDimScreen") private var autoDimEnabled = false
     @State private var isDimmed = false
     @State private var dimTimer: Timer?
-    @State private var brightnessTimer: Timer?
-    @State private var savedBrightness: CGFloat = UIScreen.main.brightness
     private let dimDelay: TimeInterval = 8.0
     
     // Photo timer mode
@@ -60,11 +70,22 @@ struct TimelapseCameraView: View {
     @State private var lockMode = false
     @State private var unlockProgress: CGFloat = 0
     @State private var holdStartDate: Date?
+    @State private var unlockTickTimer: Timer?
+    @State private var unlockAnimStyle: UnlockAnimStyle = .pigeonFly
+    @State private var showUnlockAnim = false
+    
+    /// Customisable hold-to-unlock duration (seconds). Persisted across sessions.
+    @AppStorage("unlockHoldDuration") private var unlockHoldDuration: Double = 2.0
     
     // App-leave counter
     @State private var appLeaveCount: Int = 0
+    @State private var totalOffTaskSeconds: Int = 0
     @State private var wasPhoneCall = false
+    @State private var lastResignDate: Date?
     private let callObserver = CXCallObserver()
+    
+    // Live Activity for Dynamic Island timer
+    @State private var studyActivity: Activity<StudySessionAttributes>?
     
     // Pinch-to-zoom baseline
     @State private var zoomAtGestureStart: CGFloat = 1.0
@@ -78,6 +99,9 @@ struct TimelapseCameraView: View {
     // Camera tutorial state
     @State private var showCameraTutorialOverlay = false
     @State private var subjectPickerFrame: CGRect = .zero
+    
+    // Presence heartbeat during study sessions
+    @State private var presenceTimer: Timer?
     
     /// Adaptive background for camera overlay elements:
     /// Light mode — translucent white (matches Start Recording style)
@@ -119,6 +143,18 @@ struct TimelapseCameraView: View {
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in handleBecomeActive() }
                 .fullScreenCover(isPresented: $showPostCaption) { postCaptionSheet }
                 .onChange(of: captureManager.isRecording) { _, newValue in handleRecordingChange(newValue) }
+                .onChange(of: captureManager.currentSubject) { _, newSubject in
+                    // Immediately broadcast subject change if actively studying
+                    if phase == .recording || phase == .timerRunning {
+                        let uid = AuthService.shared.currentUserID
+                        guard !uid.isEmpty else { return }
+                        Task {
+                            await SupabaseService.shared.updatePresence(
+                                uid: uid, isStudying: true, currentSubject: newSubject
+                            )
+                        }
+                    }
+                }
                 .onAppear {
                     if isTutorialMode {
                         // Delay to let the setup screen render and report its frame
@@ -138,9 +174,17 @@ struct TimelapseCameraView: View {
     private func handleDisappear() {
         cancelDimTimer()
         restoreBrightness()
+        endLiveActivity()
         UIApplication.shared.isIdleTimerDisabled = false
+        presenceTimer?.invalidate()
+        presenceTimer = nil
         if !captureManager.isRecording {
             captureManager.cleanup()
+        }
+        // Clear study presence when leaving camera
+        let uid = AuthService.shared.currentUserID
+        if !uid.isEmpty {
+            Task { await SupabaseService.shared.clearPresence(uid: uid) }
         }
     }
     
@@ -151,15 +195,52 @@ struct TimelapseCameraView: View {
             cancelDimTimer()
             restoreBrightness()
         }
+        
+        // Broadcast study presence
+        let isStudying = (newPhase == .recording || newPhase == .timerRunning)
+        let uid = AuthService.shared.currentUserID
+        guard !uid.isEmpty else { return }
+        
+        if isStudying {
+            // Start heartbeat every 2 minutes to keep online status alive
+            presenceTimer?.invalidate()
+            presenceTimer = Timer.scheduledTimer(withTimeInterval: 120, repeats: true) { _ in
+                Task {
+                    await SupabaseService.shared.updatePresence(
+                        uid: uid,
+                        isStudying: true,
+                        currentSubject: captureManager.currentSubject
+                    )
+                }
+            }
+        } else {
+            presenceTimer?.invalidate()
+            presenceTimer = nil
+        }
+        
+        Task {
+            await SupabaseService.shared.updatePresence(
+                uid: uid,
+                isStudying: isStudying,
+                currentSubject: isStudying ? captureManager.currentSubject : nil
+            )
+        }
     }
     
     private func handleResignActive() {
         if phase == .recording || phase == .timerRunning {
             // Check if this resign is from a phone call (don't count as leaving)
             wasPhoneCall = callObserver.calls.contains { !$0.hasEnded }
+            lastResignDate = Date()
             
-            if lockMode {
-                // Lock mode — end session when leaving the app
+            if lockMode || phase == .recording {
+                // End session when leaving the app:
+                //  - Always for lock mode (both camera & photo-timer)
+                //  - Always for timelapse recording (camera) since the
+                //    capture session can't run in the background
+                // Request background time so the export can finish before
+                // the system suspends the process.
+                captureManager.handleEnterBackground()
                 cancelDimTimer()
                 restoreBrightness()
                 captureManager.stopRecording()
@@ -170,6 +251,8 @@ struct TimelapseCameraView: View {
                 }
             } else {
                 captureManager.handleEnterBackground()
+                // Show timer on Dynamic Island while the session continues in background
+                startLiveActivity()
                 // Send a notification reminding the user to come back
                 if !wasPhoneCall {
                     sendStudyReminder()
@@ -192,11 +275,16 @@ struct TimelapseCameraView: View {
     
     private func handleBecomeActive() {
         if phase == .recording || phase == .timerRunning {
-            if !wasPhoneCall {
+            // Only count as a leave if gone for >= 2 seconds and not a phone call
+            let awaySeconds = lastResignDate.map { Date().timeIntervalSince($0) } ?? 0
+            if !wasPhoneCall && awaySeconds >= 2 {
                 appLeaveCount += 1
+                totalOffTaskSeconds += Int(awaySeconds)
             }
             wasPhoneCall = false
+            lastResignDate = nil
             captureManager.handleEnterForeground()
+            endLiveActivity()
             wakeScreen()
         }
     }
@@ -235,14 +323,14 @@ struct TimelapseCameraView: View {
     
     private var cameraContent: some View {
         cameraZStack
-            .background(FactumTheme.background)
+            .background(PigeonTheme.background)
             .gesture(magnifyGesture)
     }
     
     @ViewBuilder
     private var cameraZStack: some View {
         ZStack {
-            FactumTheme.background.ignoresSafeArea()
+            PigeonTheme.background.ignoresSafeArea()
             
             if showsCameraPreview {
                 CameraPreviewView(session: captureManager.captureSession,
@@ -293,6 +381,7 @@ struct TimelapseCameraView: View {
             capturedPhotos: photos,
             subjectSegments: captureManager.finalizedSegments(),
             appLeaveCount: appLeaveCount,
+            offTaskSeconds: totalOffTaskSeconds,
             onComplete: {
                 showPostCaption = false
                 captureManager.cleanup()
@@ -319,15 +408,15 @@ struct TimelapseCameraView: View {
     @ViewBuilder
     private var exportOverlay: some View {
         if captureManager.isExporting {
-            FactumTheme.background.opacity(0.7)
+            PigeonTheme.background.opacity(0.7)
                 .ignoresSafeArea()
             VStack(spacing: 16) {
                 ProgressView()
-                    .tint(FactumTheme.primaryText)
+                    .tint(PigeonTheme.primaryText)
                     .scaleEffect(1.5)
                 Text("Creating your timelapse...")
-                    .font(FactumTheme.subheadlineFont)
-                    .foregroundStyle(FactumTheme.primaryText)
+                    .font(PigeonTheme.subheadlineFont)
+                    .foregroundStyle(PigeonTheme.primaryText)
             }
         }
     }
@@ -391,9 +480,9 @@ struct TimelapseCameraView: View {
                 } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .foregroundStyle(PigeonTheme.primaryText)
                         .padding(12)
-                        .background(FactumTheme.elevated)
+                        .background(PigeonTheme.elevated)
                         .clipShape(Circle())
                 }
                 Spacer()
@@ -413,8 +502,8 @@ struct TimelapseCameraView: View {
                 .padding(.horizontal, 24)
                 
                 Text(captureManager.recordingMode == .timelapse ? "Choose Timelapse" : "Choose Timer")
-                    .font(FactumTheme.titleFont)
-                    .foregroundStyle(FactumTheme.primaryText)
+                    .font(PigeonTheme.titleFont)
+                    .foregroundStyle(PigeonTheme.primaryText)
                 
                 // Mode cards
                 VStack(spacing: 10) {
@@ -433,12 +522,12 @@ struct TimelapseCameraView: View {
                     Image(systemName: captureManager.detectedOrientation.icon)
                         .font(.system(size: 12))
                     Text(captureManager.detectedOrientation.displayLabel)
-                        .font(FactumTheme.font(12, weight: .semibold))
+                        .font(PigeonTheme.font(12, weight: .semibold))
                 }
-                .foregroundStyle(FactumTheme.secondaryText)
+                .foregroundStyle(PigeonTheme.secondaryText)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
-                .background(FactumTheme.cardBackground)
+                .background(PigeonTheme.cardBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .animation(.easeInOut(duration: 0.2), value: captureManager.detectedOrientation.isLandscape)
                 .padding(.top, 4)
@@ -470,22 +559,22 @@ struct TimelapseCameraView: View {
                     
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Subject")
-                            .font(FactumTheme.smallFont)
-                            .foregroundStyle(FactumTheme.tertiaryText)
+                            .font(PigeonTheme.smallFont)
+                            .foregroundStyle(PigeonTheme.tertiaryText)
                         Text(captureManager.currentSubject)
-                            .font(FactumTheme.subheadlineFont)
-                            .foregroundStyle(FactumTheme.primaryText)
+                            .font(PigeonTheme.subheadlineFont)
+                            .foregroundStyle(PigeonTheme.primaryText)
                     }
                     
                     Spacer()
                     
                     Image(systemName: "chevron.right")
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(FactumTheme.tertiaryText)
+                        .foregroundStyle(PigeonTheme.tertiaryText)
                 }
-                .padding(FactumTheme.spacing16)
-                .background(FactumTheme.cardBackground)
-                .clipShape(RoundedRectangle(cornerRadius: FactumTheme.cornerField))
+                .padding(PigeonTheme.spacing16)
+                .background(PigeonTheme.cardBackground)
+                .clipShape(RoundedRectangle(cornerRadius: PigeonTheme.cornerField))
             }
             .padding(.horizontal, 24)
             .overlay {
@@ -499,7 +588,7 @@ struct TimelapseCameraView: View {
                 setupSubjectPickerSheet
                     .presentationDetents([.medium])
                     .presentationDragIndicator(.visible)
-                    .presentationBackground(FactumTheme.background)
+                    .presentationBackground(PigeonTheme.background)
             }
             .sheet(isPresented: $showAddSubject) {
                 AddSubjectView()
@@ -520,7 +609,6 @@ struct TimelapseCameraView: View {
                             // No photo before — start timer directly
                             phase = .timerRunning
                             captureManager.startTimerOnly()
-                            savedBrightness = UIScreen.main.brightness
                             scheduleDim()
                         }
                     } else {
@@ -529,11 +617,11 @@ struct TimelapseCameraView: View {
                 }
             } label: {
                 Text("Next")
-                    .font(FactumTheme.subheadlineFont)
-                    .foregroundStyle(FactumTheme.accentText)
+                    .font(PigeonTheme.subheadlineFont)
+                    .foregroundStyle(PigeonTheme.accentText)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 16)
-                    .background(FactumTheme.accent)
+                    .background(PigeonTheme.accent)
                     .clipShape(RoundedRectangle(cornerRadius: 14))
             }
             .padding(.horizontal, 24)
@@ -550,19 +638,19 @@ struct TimelapseCameraView: View {
             HStack(spacing: 14) {
                 Image(systemName: mode.icon)
                     .font(.system(size: 22))
-                    .foregroundStyle(captureManager.timerMode == mode ? FactumTheme.accentText : FactumTheme.primaryText)
+                    .foregroundStyle(captureManager.timerMode == mode ? PigeonTheme.accentText : PigeonTheme.primaryText)
                     .frame(width: 44, height: 44)
-                    .background(captureManager.timerMode == mode ? FactumTheme.accent : FactumTheme.elevated)
+                    .background(captureManager.timerMode == mode ? PigeonTheme.accent : PigeonTheme.elevated)
                     .clipShape(Circle())
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(mode.rawValue)
-                        .font(FactumTheme.subheadlineFont)
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .font(PigeonTheme.subheadlineFont)
+                        .foregroundStyle(PigeonTheme.primaryText)
                     
                     Text(modeDescription(mode))
-                        .font(FactumTheme.captionFont)
-                        .foregroundStyle(FactumTheme.secondaryText)
+                        .font(PigeonTheme.captionFont)
+                        .foregroundStyle(PigeonTheme.secondaryText)
                 }
                 
                 Spacer()
@@ -570,16 +658,16 @@ struct TimelapseCameraView: View {
                 if captureManager.timerMode == mode {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 22))
-                        .foregroundStyle(FactumTheme.accent)
+                        .foregroundStyle(PigeonTheme.accent)
                 }
             }
             .padding(14)
-            .background(captureManager.timerMode == mode ? FactumTheme.accent.opacity(0.5) : FactumTheme.surfaceBackground)
+            .background(captureManager.timerMode == mode ? PigeonTheme.accent.opacity(0.5) : PigeonTheme.surfaceBackground)
             .clipShape(RoundedRectangle(cornerRadius: 14))
             .overlay(
                 RoundedRectangle(cornerRadius: 14)
                     .strokeBorder(
-                        captureManager.timerMode == mode ? FactumTheme.accent : .clear,
+                        captureManager.timerMode == mode ? PigeonTheme.accent : .clear,
                         lineWidth: 1.5
                     )
             )
@@ -604,16 +692,16 @@ struct TimelapseCameraView: View {
             VStack(spacing: 12) {
                 HStack {
                     Text("Study")
-                        .font(FactumTheme.bodyFont)
-                        .foregroundStyle(FactumTheme.secondaryText)
+                        .font(PigeonTheme.bodyFont)
+                        .foregroundStyle(PigeonTheme.secondaryText)
                     Spacer()
                     HStack(spacing: 8) {
                         stepButton(systemName: "minus") {
                             captureManager.pomodoroStudyMinutes = max(5, captureManager.pomodoroStudyMinutes - 5)
                         }
                         Text("\(captureManager.pomodoroStudyMinutes) min")
-                            .font(FactumTheme.font(16, weight: .semibold))
-                            .foregroundStyle(FactumTheme.primaryText)
+                            .font(PigeonTheme.font(16, weight: .semibold))
+                            .foregroundStyle(PigeonTheme.primaryText)
                             .frame(width: 64)
                         stepButton(systemName: "plus") {
                             captureManager.pomodoroStudyMinutes = min(90, captureManager.pomodoroStudyMinutes + 5)
@@ -623,16 +711,16 @@ struct TimelapseCameraView: View {
                 
                 HStack {
                     Text("Break")
-                        .font(FactumTheme.bodyFont)
-                        .foregroundStyle(FactumTheme.secondaryText)
+                        .font(PigeonTheme.bodyFont)
+                        .foregroundStyle(PigeonTheme.secondaryText)
                     Spacer()
                     HStack(spacing: 8) {
                         stepButton(systemName: "minus") {
                             captureManager.pomodoroBreakMinutes = max(1, captureManager.pomodoroBreakMinutes - 1)
                         }
                         Text("\(captureManager.pomodoroBreakMinutes) min")
-                            .font(FactumTheme.font(16, weight: .semibold))
-                            .foregroundStyle(FactumTheme.primaryText)
+                            .font(PigeonTheme.font(16, weight: .semibold))
+                            .foregroundStyle(PigeonTheme.primaryText)
                             .frame(width: 64)
                         stepButton(systemName: "plus") {
                             captureManager.pomodoroBreakMinutes = min(30, captureManager.pomodoroBreakMinutes + 1)
@@ -642,16 +730,16 @@ struct TimelapseCameraView: View {
                 
                 HStack {
                     Text("Cycles")
-                        .font(FactumTheme.bodyFont)
-                        .foregroundStyle(FactumTheme.secondaryText)
+                        .font(PigeonTheme.bodyFont)
+                        .foregroundStyle(PigeonTheme.secondaryText)
                     Spacer()
                     HStack(spacing: 8) {
                         stepButton(systemName: "minus") {
                             captureManager.pomodoroMaxCycles = max(0, captureManager.pomodoroMaxCycles - 1)
                         }
                         Text(captureManager.pomodoroMaxCycles == 0 ? "\u{221E}" : "\(captureManager.pomodoroMaxCycles)")
-                            .font(FactumTheme.font(16, weight: .semibold))
-                            .foregroundStyle(FactumTheme.primaryText)
+                            .font(PigeonTheme.font(16, weight: .semibold))
+                            .foregroundStyle(PigeonTheme.primaryText)
                             .frame(width: 64)
                         stepButton(systemName: "plus") {
                             captureManager.pomodoroMaxCycles = min(20, captureManager.pomodoroMaxCycles + 1)
@@ -660,14 +748,14 @@ struct TimelapseCameraView: View {
                 }
             }
             .padding(16)
-            .background(FactumTheme.surfaceBackground)
+            .background(PigeonTheme.surfaceBackground)
             .clipShape(RoundedRectangle(cornerRadius: 14))
             
         case .setTime:
             VStack(spacing: 12) {
                 Text("Duration")
-                    .font(FactumTheme.bodyFont)
-                    .foregroundStyle(FactumTheme.secondaryText)
+                    .font(PigeonTheme.bodyFont)
+                    .foregroundStyle(PigeonTheme.secondaryText)
                 
                 HStack(spacing: 16) {
                     // Quick presets
@@ -680,11 +768,11 @@ struct TimelapseCameraView: View {
                             customMinutes = minutes % 60
                         } label: {
                             Text(label)
-                                .font(FactumTheme.font(14, weight: .semibold))
-                                .foregroundStyle(isSelected ? FactumTheme.accentText : FactumTheme.primaryText)
+                                .font(PigeonTheme.font(14, weight: .semibold))
+                                .foregroundStyle(isSelected ? PigeonTheme.accentText : PigeonTheme.primaryText)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 10)
-                                .background(isSelected ? FactumTheme.accent : FactumTheme.elevated)
+                                .background(isSelected ? PigeonTheme.accent : PigeonTheme.elevated)
                                 .clipShape(RoundedRectangle(cornerRadius: 10))
                         }
                     }
@@ -699,8 +787,8 @@ struct TimelapseCameraView: View {
                         customMinutes = total % 60
                     }
                     Text(String(format: "%dh %02dm", customHours, customMinutes))
-                        .font(FactumTheme.font(18, weight: .bold))
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .font(PigeonTheme.font(18, weight: .bold))
+                        .foregroundStyle(PigeonTheme.primaryText)
                         .monospacedDigit()
                         .frame(width: 100)
                     stepButton(systemName: "plus") {
@@ -712,7 +800,7 @@ struct TimelapseCameraView: View {
                 }
             }
             .padding(16)
-            .background(FactumTheme.surfaceBackground)
+            .background(PigeonTheme.surfaceBackground)
             .clipShape(RoundedRectangle(cornerRadius: 14))
         }
     }
@@ -721,9 +809,9 @@ struct TimelapseCameraView: View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(FactumTheme.primaryText)
+                .foregroundStyle(PigeonTheme.primaryText)
                 .frame(width: 32, height: 32)
-                .background(FactumTheme.elevated)
+                .background(PigeonTheme.elevated)
                 .clipShape(Circle())
         }
     }
@@ -738,12 +826,12 @@ struct TimelapseCameraView: View {
                 Image(systemName: icon)
                     .font(.system(size: 12, weight: .semibold))
                 Text(label)
-                    .font(FactumTheme.font(13, weight: .semibold))
+                    .font(PigeonTheme.font(13, weight: .semibold))
             }
-            .foregroundStyle(isOn.wrappedValue ? FactumTheme.accentText : FactumTheme.secondaryText)
+            .foregroundStyle(isOn.wrappedValue ? PigeonTheme.accentText : PigeonTheme.secondaryText)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 8)
-            .background(isOn.wrappedValue ? FactumTheme.accent : FactumTheme.surfaceBackground)
+            .background(isOn.wrappedValue ? PigeonTheme.accent : PigeonTheme.surfaceBackground)
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
     }
@@ -757,15 +845,15 @@ struct TimelapseCameraView: View {
             }
         } label: {
             Text(label)
-                .font(FactumTheme.font(14, weight: .semibold))
-                .foregroundStyle(isSelected ? FactumTheme.accentText : FactumTheme.secondaryText)
+                .font(PigeonTheme.font(14, weight: .semibold))
+                .foregroundStyle(isSelected ? PigeonTheme.accentText : PigeonTheme.secondaryText)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 10)
-                .background(isSelected ? FactumTheme.accent : FactumTheme.surfaceBackground)
+                .background(isSelected ? PigeonTheme.accent : PigeonTheme.surfaceBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 .overlay(
                     RoundedRectangle(cornerRadius: 10)
-                        .strokeBorder(isSelected ? FactumTheme.accent : .clear, lineWidth: 1.5)
+                        .strokeBorder(isSelected ? PigeonTheme.accent : .clear, lineWidth: 1.5)
                 )
         }
     }
@@ -817,7 +905,6 @@ struct TimelapseCameraView: View {
                     // Record button — Apple Camera style
                     Button {
                         Haptics.medium()
-                        savedBrightness = UIScreen.main.brightness
                         showRecordFlash = true
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                             showRecordFlash = false
@@ -876,7 +963,7 @@ struct TimelapseCameraView: View {
                 .foregroundStyle(.white.opacity(0.9))
             
             Text(timerSummaryText)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 12, weight: .medium, design: .serif))
                 .foregroundStyle(.white.opacity(0.7))
         }
         .padding(.horizontal, 12)
@@ -910,29 +997,26 @@ struct TimelapseCameraView: View {
             VStack(spacing: 0) {
                 Spacer()
                 
-                // Centre area — recording indicator + timer + subject
-                VStack(spacing: 8) {
-                    // Recording indicator pill (red dot + time)
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(.red)
-                            .frame(width: 8, height: 8)
-                        Text(formatTime(captureManager.elapsedSeconds))
-                            .font(.system(size: 15, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(.white)
-                            .monospacedDigit()
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(.red.opacity(0.8))
-                    .clipShape(Capsule())
+                // Centre area — poster-style timer display
+                VStack(spacing: 6) {
+                    // Recording indicator — small red dot
+                    Circle()
+                        .fill(.red)
+                        .frame(width: 8, height: 8)
+                        .padding(.bottom, 4)
+                    
+                    // Large elapsed time — tall serif, poster-style
+                    Text(formatTime(captureManager.elapsedSeconds))
+                        .font(.system(size: 52, weight: .ultraLight, design: .serif))
+                        .foregroundStyle(.white)
+                        .tracking(2)
                     
                     // Mode-specific info (pomodoro phase, countdown, etc.)
                     recordingModeInfo
                     
                     // Subject pill — always visible, tappable only when unlocked
                     subjectPill(isCamera: true)
-                        .padding(.top, 2)
+                        .padding(.top, 6)
                         .allowsHitTesting(!lockMode)
                         .opacity(lockMode ? 0.6 : 1.0)
                     
@@ -945,11 +1029,15 @@ struct TimelapseCameraView: View {
                 Spacer()
                 
                 // Bottom chrome
-                VStack(spacing: 16) {
-                    if lockMode {
-                        // Locked: hold-to-unlock control
+                if lockMode {
+                    // Locked: hold-to-unlock centered at bottom, no gradient
+                    VStack(spacing: 16) {
                         holdToUnlockControl(isCamera: true)
-                    } else {
+                    }
+                    .padding(.bottom, 40)
+                    .padding(.top, 12)
+                } else {
+                    VStack(spacing: 16) {
                         // Zoom level buttons
                         zoomButtons
                         
@@ -1007,17 +1095,17 @@ struct TimelapseCameraView: View {
                         }
                         .padding(.horizontal, 32)
                     }
-                }
-                .padding(.bottom, 40)
-                .padding(.top, 12)
-                .background(
-                    LinearGradient(
-                        colors: [.clear, .black.opacity(0.5)],
-                        startPoint: .top,
-                        endPoint: .bottom
+                    .padding(.bottom, 40)
+                    .padding(.top, 12)
+                    .background(
+                        LinearGradient(
+                            colors: [.clear, .black.opacity(0.5)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .ignoresSafeArea(edges: .bottom)
                     )
-                    .ignoresSafeArea(edges: .bottom)
-                )
+                }
             }
             .opacity(captureManager.isExporting ? 0.3 : 1.0)
             .allowsHitTesting(!captureManager.isExporting)
@@ -1029,7 +1117,7 @@ struct TimelapseCameraView: View {
         }
     }
     
-    // MARK: - Recording Mode Info (compact, shown below red pill)
+    // MARK: - Recording Mode Info (poster-style, shown below timer)
     
     @ViewBuilder
     private var recordingModeInfo: some View {
@@ -1038,19 +1126,17 @@ struct TimelapseCameraView: View {
             EmptyView()
             
         case .pomodoro:
-            VStack(spacing: 4) {
-                // Phase + remaining time
-                HStack(spacing: 8) {
-                    Text(captureManager.pomodoroPhase.rawValue.uppercased())
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(captureManager.isOnBreak ? .green : .white.opacity(0.8))
-                        .tracking(1.5)
-                    
-                    Text(formatTime(captureManager.pomodoroPhaseSecondsRemaining))
-                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(captureManager.isOnBreak ? .green : .white.opacity(0.7))
-                        .monospacedDigit()
-                }
+            VStack(spacing: 6) {
+                // Phase label
+                Text(captureManager.pomodoroPhase.rawValue.uppercased())
+                    .font(.system(size: 10, weight: .regular, design: .serif))
+                    .tracking(3)
+                    .foregroundStyle(captureManager.isOnBreak ? .green : .white.opacity(0.5))
+                
+                // Phase remaining — large
+                Text(formatTime(captureManager.pomodoroPhaseSecondsRemaining))
+                    .font(.system(size: 18, weight: .light, design: .serif))
+                    .foregroundStyle(captureManager.isOnBreak ? .green : .white.opacity(0.7))
                 
                 // Cycle count
                 Text(
@@ -1058,16 +1144,17 @@ struct TimelapseCameraView: View {
                         ? "\(captureManager.pomodoroCompletedCycles)/\(captureManager.pomodoroMaxCycles) cycles"
                         : "\(captureManager.pomodoroCompletedCycles) cycles"
                 )
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.white.opacity(0.4))
+                .font(.system(size: 11, weight: .light, design: .serif))
+                .foregroundStyle(.white.opacity(0.3))
                 
                 if captureManager.isOnBreak {
-                    Text("Break time")
-                        .font(.system(size: 11, weight: .medium))
+                    Text("BREAK")
+                        .font(.system(size: 10, weight: .regular, design: .serif))
+                        .tracking(2)
                         .foregroundStyle(.green.opacity(0.8))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 3)
-                        .background(.green.opacity(0.15))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 4)
+                        .background(.green.opacity(0.12))
                         .clipShape(Capsule())
                 }
             }
@@ -1075,13 +1162,13 @@ struct TimelapseCameraView: View {
         case .setTime:
             VStack(spacing: 4) {
                 Text(formatTime(captureManager.countdownSecondsRemaining))
-                    .font(.system(size: 14, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(captureManager.countdownSecondsRemaining < 60 ? .orange : .white.opacity(0.7))
-                    .monospacedDigit()
+                    .font(.system(size: 18, weight: .light, design: .serif))
+                    .foregroundStyle(captureManager.countdownSecondsRemaining < 60 ? .orange : .white.opacity(0.6))
                 
                 Text("remaining")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.4))
+                    .font(.system(size: 10, weight: .light, design: .serif))
+                    .tracking(1)
+                    .foregroundStyle(.white.opacity(0.3))
             }
         }
     }
@@ -1105,102 +1192,115 @@ struct TimelapseCameraView: View {
     
     @ViewBuilder
     private var timerDisplay: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 12) {
             switch captureManager.timerMode {
             case .continuous:
-                ZStack {
+                VStack(spacing: 8) {
+                    // Breathing ring — smaller, accent only
                     BreathingRing(ringColor: .white, trackColor: .white.opacity(0.15))
-                        .frame(width: 220, height: 220)
+                        .frame(width: 80, height: 80)
                     
-                    VStack(spacing: 4) {
-                        Text(formatTime(captureManager.elapsedSeconds))
-                            .font(.system(size: 42, weight: .light, design: .rounded))
-                            .foregroundStyle(.white)
-                            .monospacedDigit()
-                        
-                        Text(captureManager.isRecording ? "Recording" : "Tap to start")
-                            .font(FactumTheme.captionFont)
-                            .foregroundStyle(.white.opacity(0.5))
-                    }
+                    // Large poster-style time
+                    Text(formatTime(captureManager.elapsedSeconds))
+                        .font(.system(size: 56, weight: .ultraLight, design: .serif))
+                        .foregroundStyle(.white)
+                        .tracking(2)
+                    
+                    Text(captureManager.isRecording ? "RECORDING" : "TAP TO START")
+                        .font(.system(size: 10, weight: .regular, design: .serif))
+                        .tracking(3)
+                        .foregroundStyle(.white.opacity(0.4))
                 }
                 
             case .pomodoro:
-                // Phase indicator
-                Text(captureManager.pomodoroPhase.rawValue.uppercased())
-                    .font(FactumTheme.font(14, weight: .bold))
-                    .foregroundStyle(captureManager.isOnBreak ? .green : .white)
-                    .tracking(2)
-                
-                // Circular progress with cycle time
-                ZStack {
-                    CircularTimerRing(
-                        progress: pomodoroPhaseProgress,
-                        ringColor: captureManager.isOnBreak ? .green : .white,
-                        trackColor: .white.opacity(0.15),
-                        lineWidth: 6
-                    )
-                    .frame(width: 220, height: 220)
+                VStack(spacing: 8) {
+                    // Phase label
+                    Text(captureManager.pomodoroPhase.rawValue.uppercased())
+                        .font(.system(size: 10, weight: .regular, design: .serif))
+                        .tracking(3)
+                        .foregroundStyle(captureManager.isOnBreak ? .green : .white.opacity(0.5))
                     
-                    VStack(spacing: 4) {
-                        Text(formatTime(captureManager.pomodoroPhaseSecondsRemaining))
-                            .font(.system(size: 40, weight: .light, design: .rounded))
-                            .foregroundStyle(captureManager.isOnBreak ? .green : .white)
-                            .monospacedDigit()
-                        
-                        Text(
-                            captureManager.pomodoroMaxCycles > 0
-                                ? "\(captureManager.pomodoroCompletedCycles)/\(captureManager.pomodoroMaxCycles) cycles"
-                                : "\(captureManager.pomodoroCompletedCycles) cycles"
-                        )
-                            .font(FactumTheme.captionFont)
-                            .foregroundStyle(.white.opacity(0.5))
+                    // Phase remaining — large poster
+                    Text(formatTime(captureManager.pomodoroPhaseSecondsRemaining))
+                        .font(.system(size: 56, weight: .ultraLight, design: .serif))
+                        .foregroundStyle(captureManager.isOnBreak ? .green : .white)
+                        .tracking(2)
+                    
+                    // Thin progress bar
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            RoundedRectangle(cornerRadius: 1)
+                                .fill(.white.opacity(0.12))
+                                .frame(height: 2)
+                            RoundedRectangle(cornerRadius: 1)
+                                .fill(captureManager.isOnBreak ? .green : .white.opacity(0.6))
+                                .frame(width: geo.size.width * pomodoroPhaseProgress, height: 2)
+                                .animation(.linear(duration: 1), value: pomodoroPhaseProgress)
+                        }
                     }
-                }
-                
-                Text(formatTime(captureManager.elapsedSeconds))
-                    .font(FactumTheme.font(16, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.5))
-                    .monospacedDigit()
-                    .padding(.top, 4)
-                
-                if captureManager.isOnBreak {
-                    Text("Take a break! Recording paused.")
-                        .font(FactumTheme.captionFont)
-                        .foregroundStyle(.green.opacity(0.8))
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 6)
-                        .background(.green.opacity(0.15))
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .frame(width: 120, height: 2)
+                    .padding(.vertical, 4)
+                    
+                    // Cycle count + total time
+                    Text(
+                        captureManager.pomodoroMaxCycles > 0
+                            ? "\(captureManager.pomodoroCompletedCycles)/\(captureManager.pomodoroMaxCycles) CYCLES"
+                            : "\(captureManager.pomodoroCompletedCycles) CYCLES"
+                    )
+                    .font(.system(size: 10, weight: .regular, design: .serif))
+                    .tracking(2)
+                    .foregroundStyle(.white.opacity(0.35))
+                    
+                    Text(formatTime(captureManager.elapsedSeconds))
+                        .font(.system(size: 14, weight: .light, design: .serif))
+                        .foregroundStyle(.white.opacity(0.4))
+                        .tracking(1)
+                    
+                    if captureManager.isOnBreak {
+                        Text("BREAK")
+                            .font(.system(size: 10, weight: .regular, design: .serif))
+                            .tracking(2)
+                            .foregroundStyle(.green.opacity(0.8))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 4)
+                            .background(.green.opacity(0.12))
+                            .clipShape(Capsule())
+                    }
                 }
                 
             case .setTime:
-                // Circular progress with countdown
-                ZStack {
-                    CircularTimerRing(
-                        progress: setTimeProgress,
-                        ringColor: captureManager.countdownSecondsRemaining < 60 ? .orange : .white,
-                        trackColor: .white.opacity(0.15),
-                        lineWidth: 6
-                    )
-                    .frame(width: 220, height: 220)
+                VStack(spacing: 8) {
+                    // Countdown — large poster
+                    Text(formatTime(captureManager.countdownSecondsRemaining))
+                        .font(.system(size: 56, weight: .ultraLight, design: .serif))
+                        .foregroundStyle(captureManager.countdownSecondsRemaining < 60 ? .orange : .white)
+                        .tracking(2)
                     
-                    VStack(spacing: 4) {
-                        Text(formatTime(captureManager.countdownSecondsRemaining))
-                            .font(.system(size: 40, weight: .light, design: .rounded))
-                            .foregroundStyle(captureManager.countdownSecondsRemaining < 60 ? .orange : .white)
-                            .monospacedDigit()
-                        
-                        Text("remaining")
-                            .font(FactumTheme.captionFont)
-                            .foregroundStyle(.white.opacity(0.5))
+                    // Thin progress bar
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            RoundedRectangle(cornerRadius: 1)
+                                .fill(.white.opacity(0.12))
+                                .frame(height: 2)
+                            RoundedRectangle(cornerRadius: 1)
+                                .fill(captureManager.countdownSecondsRemaining < 60 ? .orange.opacity(0.7) : .white.opacity(0.6))
+                                .frame(width: geo.size.width * setTimeProgress, height: 2)
+                                .animation(.linear(duration: 1), value: setTimeProgress)
+                        }
                     }
+                    .frame(width: 120, height: 2)
+                    .padding(.vertical, 4)
+                    
+                    Text("REMAINING")
+                        .font(.system(size: 10, weight: .regular, design: .serif))
+                        .tracking(3)
+                        .foregroundStyle(.white.opacity(0.35))
+                    
+                    Text(formatTime(captureManager.elapsedSeconds))
+                        .font(.system(size: 14, weight: .light, design: .serif))
+                        .foregroundStyle(.white.opacity(0.4))
+                        .tracking(1)
                 }
-                
-                Text(formatTime(captureManager.elapsedSeconds))
-                    .font(FactumTheme.font(16, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.5))
-                    .monospacedDigit()
-                    .padding(.top, 4)
             }
         }
     }
@@ -1225,7 +1325,7 @@ struct TimelapseCameraView: View {
                 
                 Text(displayText)
                     .font(.system(size: isSelected ? 12 : 10,
-                                  weight: .semibold, design: .rounded))
+                                  weight: .semibold, design: .serif))
                     .foregroundStyle(isSelected
                         ? Color(red: 1.0, green: 0.84, blue: 0.04)
                         : .white.opacity(0.6))
@@ -1325,7 +1425,7 @@ struct TimelapseCameraView: View {
             Image(systemName: captureManager.detectedOrientation.icon)
                 .font(.system(size: 11))
             Text(captureManager.detectedOrientation.displayLabel)
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: 11, weight: .semibold, design: .serif))
         }
         .foregroundStyle(.white.opacity(0.5))
         .animation(.easeInOut(duration: 0.2), value: captureManager.detectedOrientation.isLandscape)
@@ -1358,7 +1458,7 @@ struct TimelapseCameraView: View {
                 Spacer()
                 
                 Text(phase == .photoAfter ? "Take Your Photo" : "Take a Photo")
-                    .font(FactumTheme.subheadlineFont)
+                    .font(PigeonTheme.subheadlineFont)
                     .foregroundStyle(.white)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
@@ -1435,12 +1535,12 @@ struct TimelapseCameraView: View {
                         Image(systemName: "arrow.counterclockwise")
                             .font(.system(size: 14, weight: .semibold))
                         Text("Retake")
-                            .font(FactumTheme.font(14, weight: .semibold))
+                            .font(PigeonTheme.font(14, weight: .semibold))
                     }
-                    .foregroundStyle(FactumTheme.primaryText)
+                    .foregroundStyle(PigeonTheme.primaryText)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
-                    .background(FactumTheme.elevated)
+                    .background(PigeonTheme.elevated)
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                 }
                 
@@ -1469,11 +1569,11 @@ struct TimelapseCameraView: View {
                 startTimerFromConfirm()
             } label: {
                 Text("Start Timer")
-                    .font(FactumTheme.font(18, weight: .semibold))
-                    .foregroundStyle(FactumTheme.accentText)
+                    .font(PigeonTheme.font(18, weight: .semibold))
+                    .foregroundStyle(PigeonTheme.accentText)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 18)
-                    .background(FactumTheme.accent)
+                    .background(PigeonTheme.accent)
                     .clipShape(RoundedRectangle(cornerRadius: 14))
             }
             .padding(.horizontal, 24)
@@ -1497,9 +1597,9 @@ struct TimelapseCameraView: View {
                         } label: {
                             Image(systemName: "pause.fill")
                                 .font(.system(size: 18, weight: .semibold))
-                                .foregroundStyle(FactumTheme.primaryText)
+                                .foregroundStyle(PigeonTheme.primaryText)
                                 .padding(12)
-                                .background(FactumTheme.elevated)
+                                .background(PigeonTheme.elevated)
                                 .clipShape(Circle())
                         }
                     }
@@ -1520,7 +1620,7 @@ struct TimelapseCameraView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                         .overlay(
                             RoundedRectangle(cornerRadius: 12)
-                                .strokeBorder(FactumTheme.accent, lineWidth: 2)
+                                .strokeBorder(PigeonTheme.accent, lineWidth: 2)
                         )
                         .shadow(color: .black.opacity(0.2), radius: 8, y: 4)
                         .padding(.bottom, 12)
@@ -1562,11 +1662,11 @@ struct TimelapseCameraView: View {
                         handleTimerEnd()
                     } label: {
                         Text("End Session")
-                            .font(FactumTheme.font(18, weight: .semibold))
-                            .foregroundStyle(FactumTheme.accentText)
+                            .font(PigeonTheme.font(18, weight: .semibold))
+                            .foregroundStyle(PigeonTheme.accentText)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 18)
-                            .background(FactumTheme.accent)
+                            .background(PigeonTheme.accent)
                             .clipShape(RoundedRectangle(cornerRadius: 14))
                     }
                     .padding(.horizontal, 24)
@@ -1585,99 +1685,115 @@ struct TimelapseCameraView: View {
     
     @ViewBuilder
     private var photoTimerDisplay: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 12) {
             switch captureManager.timerMode {
             case .continuous:
-                ZStack {
-                    BreathingRing(ringColor: FactumTheme.accent, trackColor: FactumTheme.elevated)
-                        .frame(width: 220, height: 220)
+                VStack(spacing: 8) {
+                    // Breathing ring — smaller accent
+                    BreathingRing(ringColor: PigeonTheme.accent, trackColor: PigeonTheme.elevated)
+                        .frame(width: 80, height: 80)
                     
-                    VStack(spacing: 4) {
-                        Text(formatTime(captureManager.elapsedSeconds))
-                            .font(.system(size: 42, weight: .light, design: .rounded))
-                            .foregroundStyle(FactumTheme.primaryText)
-                            .monospacedDigit()
-                        
-                        Text("Studying")
-                            .font(FactumTheme.captionFont)
-                            .foregroundStyle(FactumTheme.secondaryText)
-                    }
+                    // Large poster-style time
+                    Text(formatTime(captureManager.elapsedSeconds))
+                        .font(.system(size: 56, weight: .ultraLight, design: .serif))
+                        .foregroundStyle(PigeonTheme.primaryText)
+                        .tracking(2)
+                    
+                    Text("STUDYING")
+                        .font(.system(size: 10, weight: .regular, design: .serif))
+                        .tracking(3)
+                        .foregroundStyle(PigeonTheme.tertiaryText)
                 }
                 
             case .pomodoro:
-                Text(captureManager.pomodoroPhase.rawValue.uppercased())
-                    .font(FactumTheme.font(14, weight: .bold))
-                    .foregroundStyle(captureManager.isOnBreak ? .green : FactumTheme.primaryText)
-                    .tracking(2)
-                
-                ZStack {
-                    CircularTimerRing(
-                        progress: pomodoroPhaseProgress,
-                        ringColor: captureManager.isOnBreak ? .green : FactumTheme.accent,
-                        trackColor: FactumTheme.elevated,
-                        lineWidth: 6
-                    )
-                    .frame(width: 220, height: 220)
+                VStack(spacing: 8) {
+                    // Phase label
+                    Text(captureManager.pomodoroPhase.rawValue.uppercased())
+                        .font(.system(size: 10, weight: .regular, design: .serif))
+                        .tracking(3)
+                        .foregroundStyle(captureManager.isOnBreak ? .green : PigeonTheme.tertiaryText)
                     
-                    VStack(spacing: 4) {
-                        Text(formatTime(captureManager.pomodoroPhaseSecondsRemaining))
-                            .font(.system(size: 40, weight: .light, design: .rounded))
-                            .foregroundStyle(captureManager.isOnBreak ? .green : FactumTheme.primaryText)
-                            .monospacedDigit()
-                        
-                        Text(
-                            captureManager.pomodoroMaxCycles > 0
-                                ? "\(captureManager.pomodoroCompletedCycles)/\(captureManager.pomodoroMaxCycles) cycles"
-                                : "\(captureManager.pomodoroCompletedCycles) cycles"
-                        )
-                            .font(FactumTheme.captionFont)
-                            .foregroundStyle(FactumTheme.secondaryText)
+                    // Phase remaining — large poster
+                    Text(formatTime(captureManager.pomodoroPhaseSecondsRemaining))
+                        .font(.system(size: 56, weight: .ultraLight, design: .serif))
+                        .foregroundStyle(captureManager.isOnBreak ? .green : PigeonTheme.primaryText)
+                        .tracking(2)
+                    
+                    // Thin progress bar
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            RoundedRectangle(cornerRadius: 1)
+                                .fill(PigeonTheme.separator)
+                                .frame(height: 2)
+                            RoundedRectangle(cornerRadius: 1)
+                                .fill(captureManager.isOnBreak ? .green : PigeonTheme.accent)
+                                .frame(width: geo.size.width * pomodoroPhaseProgress, height: 2)
+                                .animation(.linear(duration: 1), value: pomodoroPhaseProgress)
+                        }
                     }
-                }
-                
-                Text(formatTime(captureManager.elapsedSeconds))
-                    .font(FactumTheme.font(16, weight: .medium))
-                    .foregroundStyle(FactumTheme.secondaryText)
-                    .monospacedDigit()
-                    .padding(.top, 4)
-                
-                if captureManager.isOnBreak {
-                    Text("Take a break!")
-                        .font(FactumTheme.captionFont)
-                        .foregroundStyle(.green.opacity(0.8))
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 6)
-                        .background(.green.opacity(0.15))
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .frame(width: 120, height: 2)
+                    .padding(.vertical, 4)
+                    
+                    // Cycle count
+                    Text(
+                        captureManager.pomodoroMaxCycles > 0
+                            ? "\(captureManager.pomodoroCompletedCycles)/\(captureManager.pomodoroMaxCycles) CYCLES"
+                            : "\(captureManager.pomodoroCompletedCycles) CYCLES"
+                    )
+                    .font(.system(size: 10, weight: .regular, design: .serif))
+                    .tracking(2)
+                    .foregroundStyle(PigeonTheme.tertiaryText)
+                    
+                    Text(formatTime(captureManager.elapsedSeconds))
+                        .font(.system(size: 14, weight: .light, design: .serif))
+                        .foregroundStyle(PigeonTheme.secondaryText)
+                        .tracking(1)
+                    
+                    if captureManager.isOnBreak {
+                        Text("BREAK")
+                            .font(.system(size: 10, weight: .regular, design: .serif))
+                            .tracking(2)
+                            .foregroundStyle(.green.opacity(0.8))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 4)
+                            .background(.green.opacity(0.12))
+                            .clipShape(Capsule())
+                    }
                 }
                 
             case .setTime:
-                ZStack {
-                    CircularTimerRing(
-                        progress: setTimeProgress,
-                        ringColor: captureManager.countdownSecondsRemaining < 60 ? .orange : FactumTheme.accent,
-                        trackColor: FactumTheme.elevated,
-                        lineWidth: 6
-                    )
-                    .frame(width: 220, height: 220)
+                VStack(spacing: 8) {
+                    // Countdown — large poster
+                    Text(formatTime(captureManager.countdownSecondsRemaining))
+                        .font(.system(size: 56, weight: .ultraLight, design: .serif))
+                        .foregroundStyle(captureManager.countdownSecondsRemaining < 60 ? .orange : PigeonTheme.primaryText)
+                        .tracking(2)
                     
-                    VStack(spacing: 4) {
-                        Text(formatTime(captureManager.countdownSecondsRemaining))
-                            .font(.system(size: 40, weight: .light, design: .rounded))
-                            .foregroundStyle(captureManager.countdownSecondsRemaining < 60 ? .orange : FactumTheme.primaryText)
-                            .monospacedDigit()
-                        
-                        Text("remaining")
-                            .font(FactumTheme.captionFont)
-                            .foregroundStyle(FactumTheme.secondaryText)
+                    // Thin progress bar
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            RoundedRectangle(cornerRadius: 1)
+                                .fill(PigeonTheme.separator)
+                                .frame(height: 2)
+                            RoundedRectangle(cornerRadius: 1)
+                                .fill(captureManager.countdownSecondsRemaining < 60 ? .orange.opacity(0.7) : PigeonTheme.accent)
+                                .frame(width: geo.size.width * setTimeProgress, height: 2)
+                                .animation(.linear(duration: 1), value: setTimeProgress)
+                        }
                     }
+                    .frame(width: 120, height: 2)
+                    .padding(.vertical, 4)
+                    
+                    Text("REMAINING")
+                        .font(.system(size: 10, weight: .regular, design: .serif))
+                        .tracking(3)
+                        .foregroundStyle(PigeonTheme.tertiaryText)
+                    
+                    Text(formatTime(captureManager.elapsedSeconds))
+                        .font(.system(size: 14, weight: .light, design: .serif))
+                        .foregroundStyle(PigeonTheme.secondaryText)
+                        .tracking(1)
                 }
-                
-                Text(formatTime(captureManager.elapsedSeconds))
-                    .font(FactumTheme.font(16, weight: .medium))
-                    .foregroundStyle(FactumTheme.secondaryText)
-                    .monospacedDigit()
-                    .padding(.top, 4)
             }
         }
     }
@@ -1712,7 +1828,6 @@ struct TimelapseCameraView: View {
     
     private func startTimerFromConfirm() {
         captureManager.startTimerOnly()
-        savedBrightness = UIScreen.main.brightness
         withAnimation(.easeInOut(duration: 0.3)) {
             phase = .timerRunning
         }
@@ -1744,21 +1859,21 @@ struct TimelapseCameraView: View {
                     .fill(StudySubject.color(for: captureManager.currentSubject, in: subjects))
                     .frame(width: 8, height: 8)
                 Text(captureManager.currentSubject)
-                    .font(FactumTheme.font(13, weight: .semibold))
+                    .font(PigeonTheme.font(13, weight: .semibold))
                 Image(systemName: "chevron.down")
                     .font(.system(size: 10, weight: .bold))
             }
-            .foregroundStyle(isCamera ? .white : FactumTheme.primaryText)
+            .foregroundStyle(isCamera ? .white : PigeonTheme.primaryText)
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
-            .background(isCamera ? Color.black.opacity(0.4) : FactumTheme.elevated)
+            .background(isCamera ? Color.black.opacity(0.4) : PigeonTheme.elevated)
             .clipShape(Capsule())
         }
         .sheet(isPresented: $showSubjectPicker) {
             subjectSwitchSheet
                 .presentationDetents([.medium])
                 .presentationDragIndicator(.visible)
-                .presentationBackground(FactumTheme.background)
+                .presentationBackground(PigeonTheme.background)
         }
     }
     
@@ -1780,13 +1895,13 @@ struct TimelapseCameraView: View {
                                     .fill(studySubject.color)
                                     .frame(width: 12, height: 12)
                                 Text(studySubject.name)
-                                    .font(FactumTheme.bodyFont)
-                                    .foregroundStyle(FactumTheme.primaryText)
+                                    .font(PigeonTheme.bodyFont)
+                                    .foregroundStyle(PigeonTheme.primaryText)
                                 Spacer()
                                 if captureManager.currentSubject == studySubject.name {
                                     Image(systemName: "checkmark")
                                         .font(.system(size: 14, weight: .bold))
-                                        .foregroundStyle(FactumTheme.accent)
+                                        .foregroundStyle(PigeonTheme.accent)
                                 }
                             }
                             .padding(.horizontal, 16)
@@ -1794,7 +1909,7 @@ struct TimelapseCameraView: View {
                             .background(
                                 captureManager.currentSubject == studySubject.name
                                 ? studySubject.color.opacity(0.15)
-                                : FactumTheme.cardBackground
+                                : PigeonTheme.cardBackground
                             )
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                         }
@@ -1807,15 +1922,15 @@ struct TimelapseCameraView: View {
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     Text("Switch Subject")
-                        .font(FactumTheme.headlineFont)
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .font(PigeonTheme.headlineFont)
+                        .foregroundStyle(PigeonTheme.primaryText)
                 }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { showSubjectPicker = false }
-                        .foregroundStyle(FactumTheme.accent)
+                        .foregroundStyle(PigeonTheme.accent)
                 }
             }
-            .toolbarBackground(FactumTheme.background, for: .navigationBar)
+            .toolbarBackground(PigeonTheme.background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
         }
     }
@@ -1837,13 +1952,13 @@ struct TimelapseCameraView: View {
                                     .fill(studySubject.color)
                                     .frame(width: 12, height: 12)
                                 Text(studySubject.name)
-                                    .font(FactumTheme.bodyFont)
-                                    .foregroundStyle(FactumTheme.primaryText)
+                                    .font(PigeonTheme.bodyFont)
+                                    .foregroundStyle(PigeonTheme.primaryText)
                                 Spacer()
                                 if captureManager.currentSubject == studySubject.name {
                                     Image(systemName: "checkmark")
                                         .font(.system(size: 14, weight: .bold))
-                                        .foregroundStyle(FactumTheme.accent)
+                                        .foregroundStyle(PigeonTheme.accent)
                                 }
                             }
                             .padding(.horizontal, 16)
@@ -1851,7 +1966,7 @@ struct TimelapseCameraView: View {
                             .background(
                                 captureManager.currentSubject == studySubject.name
                                 ? studySubject.color.opacity(0.15)
-                                : FactumTheme.cardBackground
+                                : PigeonTheme.cardBackground
                             )
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                         }
@@ -1867,19 +1982,19 @@ struct TimelapseCameraView: View {
                         HStack(spacing: 12) {
                             Image(systemName: "plus")
                                 .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(FactumTheme.accent)
+                                .foregroundStyle(PigeonTheme.accent)
                             Text("New Subject")
-                                .font(FactumTheme.bodyFont)
-                                .foregroundStyle(FactumTheme.accent)
+                                .font(PigeonTheme.bodyFont)
+                                .foregroundStyle(PigeonTheme.accent)
                             Spacer()
                         }
                         .padding(.horizontal, 16)
                         .padding(.vertical, 14)
-                        .background(FactumTheme.cardBackground)
+                        .background(PigeonTheme.cardBackground)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                         .overlay(
                             RoundedRectangle(cornerRadius: 12)
-                                .strokeBorder(FactumTheme.separator, lineWidth: 1)
+                                .strokeBorder(PigeonTheme.separator, lineWidth: 1)
                         )
                     }
                 }
@@ -1890,15 +2005,15 @@ struct TimelapseCameraView: View {
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     Text("Select Subject")
-                        .font(FactumTheme.headlineFont)
-                        .foregroundStyle(FactumTheme.primaryText)
+                        .font(PigeonTheme.headlineFont)
+                        .foregroundStyle(PigeonTheme.primaryText)
                 }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { showSetupSubjectPicker = false }
-                        .foregroundStyle(FactumTheme.accent)
+                        .foregroundStyle(PigeonTheme.accent)
                 }
             }
-            .toolbarBackground(FactumTheme.background, for: .navigationBar)
+            .toolbarBackground(PigeonTheme.background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
         }
     }
@@ -1909,23 +2024,21 @@ struct TimelapseCameraView: View {
         let isOnCamera = phase == .recording
         
         return Button {
-            Haptics.light()
-            withAnimation(.easeInOut(duration: 0.2)) {
-                lockMode.toggle()
+            Haptics.medium()
+            withAnimation(.easeInOut(duration: 0.25)) {
+                lockMode = true
             }
         } label: {
-            HStack(spacing: 5) {
-                Image(systemName: lockMode ? "lock.fill" : "lock.open")
-                    .font(.system(size: 13, weight: .semibold))
-                if lockMode {
-                    Text("Locked")
-                        .font(.system(size: 11, weight: .semibold))
-                }
+            HStack(spacing: 6) {
+                Image(systemName: "lock.open")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("Lock")
+                    .font(.system(size: 12, weight: .semibold, design: .serif))
             }
-            .foregroundStyle(lockMode ? .white : (isOnCamera ? .white.opacity(0.6) : FactumTheme.secondaryText))
-            .padding(.horizontal, lockMode ? 12 : 10)
+            .foregroundStyle(isOnCamera ? .white.opacity(0.55) : PigeonTheme.secondaryText)
+            .padding(.horizontal, 14)
             .padding(.vertical, 8)
-            .background(lockMode ? .white.opacity(0.2) : (isOnCamera ? .black.opacity(0.3) : FactumTheme.elevated))
+            .background(isOnCamera ? .white.opacity(0.12) : PigeonTheme.elevated)
             .clipShape(Capsule())
         }
         .simultaneousGesture(
@@ -1937,82 +2050,162 @@ struct TimelapseCameraView: View {
         .alert("Lock Mode", isPresented: $showLockTooltip) {
             Button("OK", role: .cancel) { }
         } message: {
-            Text("Ends your session and saves your progress when you leave the app. Also hides the pause button so you can't accidentally interrupt your session.")
+            Text("Ends your session and saves your progress when you leave the app. Hides all controls — hold to unlock.")
         }
     }
     
     // MARK: - Hold to Unlock Control
     
     private func holdToUnlockControl(isCamera: Bool) -> some View {
-        let textColor: Color = isCamera ? .white.opacity(0.3) : FactumTheme.tertiaryText
-        let ringBg: Color = isCamera ? .white.opacity(0.1) : FactumTheme.secondaryText.opacity(0.2)
-        let ringFg: Color = isCamera ? .white.opacity(0.8) : FactumTheme.accent
-        let iconColor: Color = isCamera ? .white.opacity(0.5) : FactumTheme.secondaryText
+        let labelColor: Color = isCamera ? .white.opacity(0.25) : PigeonTheme.tertiaryText
+        let trackColor: Color = isCamera ? .white.opacity(0.08) : PigeonTheme.separator
+        let progressColor: Color = isCamera ? .white.opacity(0.7) : PigeonTheme.primaryText
+        let iconColor: Color = isCamera ? .white.opacity(0.35) : PigeonTheme.tertiaryText
+        let holdDuration = unlockHoldDuration
         
-        return VStack(spacing: 12) {
-            Text("Hold to unlock")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(textColor)
-            
-            ZStack {
-                Circle()
-                    .stroke(ringBg, lineWidth: 3)
-                    .frame(width: 64, height: 64)
-                
-                Circle()
-                    .trim(from: 0, to: unlockProgress)
-                    .stroke(ringFg, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                    .frame(width: 64, height: 64)
-                    .rotationEffect(.degrees(-90))
-                
-                Image(systemName: unlockProgress >= 1.0 ? "lock.open.fill" : "lock.fill")
-                    .font(.system(size: 18))
-                    .foregroundStyle(iconColor)
-                    .contentTransition(.symbolEffect(.replace))
+        return ZStack {
+            // Normal hold-to-unlock UI
+            if !showUnlockAnim {
+                VStack(spacing: 20) {
+                    // Lock icon — large, centered
+                    Image(systemName: unlockProgress >= 1.0 ? "lock.open" : "lock.fill")
+                        .font(.system(size: 28, weight: .light))
+                        .foregroundStyle(unlockProgress >= 1.0 ? progressColor : iconColor)
+                        .contentTransition(.symbolEffect(.replace))
+                    
+                    // "LOCKED" label — tall serif
+                    Text("LOCKED")
+                        .font(.system(size: 11, weight: .regular, design: .serif))
+                        .tracking(4)
+                        .foregroundStyle(labelColor)
+                    
+                    // Progress bar — horizontal, thin, elegant
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 1.5)
+                            .fill(trackColor)
+                            .frame(width: 120, height: 3)
+                        
+                        RoundedRectangle(cornerRadius: 1.5)
+                            .fill(progressColor)
+                            .frame(width: 120 * unlockProgress, height: 3)
+                    }
+                    
+                    // Instruction
+                    Text(unlockProgress > 0 ? "" : "hold to unlock")
+                        .font(.system(size: 10, weight: .light, design: .serif))
+                        .tracking(1)
+                        .foregroundStyle(labelColor)
+                        .frame(height: 14)
+                }
+                .transition(.opacity)
             }
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { _ in
-                        if holdStartDate == nil {
-                            holdStartDate = Date()
-                            Haptics.light()
-                            withAnimation(.linear(duration: 2.0)) {
-                                unlockProgress = 1.0
-                            }
+            
+            // Unlock animation overlay
+            if showUnlockAnim {
+                unlockAnimationView(isCamera: isCamera)
+                    .transition(.opacity)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 140)
+        .padding(.vertical, 24)
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in
+                    if holdStartDate == nil && !showUnlockAnim {
+                        holdStartDate = Date()
+                        Haptics.light()
+                        withAnimation(.linear(duration: holdDuration)) {
+                            unlockProgress = 1.0
+                        }
+                        // Haptic ticks every 0.4s while holding
+                        unlockTickTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { _ in
+                            Haptics.selection()
                         }
                     }
-                    .onEnded { _ in
-                        if let start = holdStartDate, Date().timeIntervalSince(start) >= 2.0 {
-                            Haptics.success()
-                            withAnimation(.easeInOut(duration: 0.2)) {
+                }
+                .onEnded { _ in
+                    unlockTickTimer?.invalidate()
+                    unlockTickTimer = nil
+                    if let start = holdStartDate, Date().timeIntervalSince(start) >= holdDuration {
+                        Haptics.success()
+                        // Pick random animation and play it
+                        unlockAnimStyle = UnlockAnimStyle.allCases.randomElement() ?? .pigeonFly
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            showUnlockAnim = true
+                        }
+                        unlockProgress = 0
+                        // After animation plays, actually unlock
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            withAnimation(.easeInOut(duration: 0.25)) {
                                 lockMode = false
-                            }
-                            unlockProgress = 0
-                        } else {
-                            withAnimation(.easeOut(duration: 0.3)) {
-                                unlockProgress = 0
+                                showUnlockAnim = false
                             }
                         }
-                        holdStartDate = nil
+                    } else {
+                        Haptics.light()
+                        withAnimation(.easeOut(duration: 0.3)) {
+                            unlockProgress = 0
+                        }
                     }
-            )
+                    holdStartDate = nil
+                }
+        )
+    }
+    
+    // MARK: - Unlock Animation Views
+    
+    @ViewBuilder
+    private func unlockAnimationView(isCamera: Bool) -> some View {
+        let fg: Color = isCamera ? .white : PigeonTheme.primaryText
+        let fg2: Color = isCamera ? .white.opacity(0.5) : PigeonTheme.secondaryText
+        
+        switch unlockAnimStyle {
+        case .pigeonFly:
+            UnlockAnim_PigeonFly(fg: fg, fg2: fg2)
+        case .lockShatter:
+            UnlockAnim_LockShatter(fg: fg, fg2: fg2)
+        case .lockMelt:
+            UnlockAnim_LockMelt(fg: fg, fg2: fg2)
+        case .keyTurn:
+            UnlockAnim_KeyTurn(fg: fg, fg2: fg2)
+        case .lockShrink:
+            UnlockAnim_LockShrink(fg: fg, fg2: fg2)
+        case .pigeonPeck:
+            UnlockAnim_PigeonPeck(fg: fg, fg2: fg2)
         }
     }
     
     // MARK: - Leave Counter
     
     private func leaveCounter(isCamera: Bool) -> some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 6) {
             Image(systemName: "iphone.and.arrow.forward")
                 .font(.system(size: 10))
             Text("Left \(appLeaveCount)×")
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: 11, weight: .medium, design: .serif))
+            if totalOffTaskSeconds > 0 {
+                Text("·")
+                    .font(.system(size: 11, weight: .medium))
+                Text(formatOffTaskTime(totalOffTaskSeconds))
+                    .font(.system(size: 11, weight: .medium, design: .serif))
+            }
         }
-        .foregroundStyle(isCamera ? .white.opacity(0.4) : FactumTheme.tertiaryText)
+        .foregroundStyle(isCamera ? .white.opacity(0.4) : PigeonTheme.tertiaryText)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(isCamera ? .white.opacity(0.1) : FactumTheme.elevated)
+        .background(isCamera ? .white.opacity(0.1) : PigeonTheme.elevated)
         .clipShape(Capsule())
+    }
+    
+    private func formatOffTaskTime(_ seconds: Int) -> String {
+        if seconds < 60 {
+            return "\(seconds)s off-task"
+        }
+        let mins = seconds / 60
+        let secs = seconds % 60
+        return secs > 0 ? "\(mins)m \(secs)s off-task" : "\(mins)m off-task"
     }
     
     // MARK: - Paused Overlay
@@ -2020,26 +2213,27 @@ struct TimelapseCameraView: View {
     private func pausedOverlay(isCamera: Bool) -> some View {
         ZStack {
             // Frosted dark background
-            (isCamera ? Color.black.opacity(0.8) : FactumTheme.background.opacity(0.95))
+            (isCamera ? Color.black.opacity(0.8) : PigeonTheme.background.opacity(0.95))
                 .ignoresSafeArea()
             
             VStack(spacing: 28) {
                 Spacer()
                 
-                // Paused indicator
-                VStack(spacing: 12) {
-                    Image(systemName: "pause.fill")
-                        .font(.system(size: 36, weight: .medium))
-                        .foregroundStyle(isCamera ? .white.opacity(0.8) : FactumTheme.primaryText)
-                    
-                    Text("Paused")
-                        .font(.system(size: 24, weight: .semibold))
-                        .foregroundStyle(isCamera ? .white : FactumTheme.primaryText)
+                // Paused indicator — poster-style
+                VStack(spacing: 16) {
+                    Text("PAUSED")
+                        .font(.system(size: 10, weight: .regular, design: .serif))
+                        .tracking(4)
+                        .foregroundStyle(isCamera ? .white.opacity(0.4) : PigeonTheme.tertiaryText)
                     
                     Text(formatTime(captureManager.elapsedSeconds))
-                        .font(.system(size: 48, weight: .light, design: .rounded))
-                        .foregroundStyle(isCamera ? .white.opacity(0.9) : FactumTheme.primaryText)
-                        .monospacedDigit()
+                        .font(.system(size: 64, weight: .ultraLight, design: .serif))
+                        .foregroundStyle(isCamera ? .white : PigeonTheme.primaryText)
+                        .tracking(3)
+                    
+                    Image(systemName: "pause.fill")
+                        .font(.system(size: 18, weight: .light))
+                        .foregroundStyle(isCamera ? .white.opacity(0.3) : PigeonTheme.tertiaryText)
                 }
                 
                 Spacer()
@@ -2054,11 +2248,11 @@ struct TimelapseCameraView: View {
                     } label: {
                         ZStack {
                             Circle()
-                                .strokeBorder(isCamera ? .white : FactumTheme.primaryText, lineWidth: 4)
+                                .strokeBorder(isCamera ? .white : PigeonTheme.primaryText, lineWidth: 4)
                                 .frame(width: 72, height: 72)
                             Image(systemName: "play.fill")
                                 .font(.system(size: 28))
-                                .foregroundStyle(isCamera ? .white : FactumTheme.primaryText)
+                                .foregroundStyle(isCamera ? .white : PigeonTheme.primaryText)
                         }
                     }
                     
@@ -2072,8 +2266,8 @@ struct TimelapseCameraView: View {
                         }
                     } label: {
                         Text("End Session")
-                            .font(.system(size: 15, weight: .medium))
-                            .foregroundStyle(isCamera ? .white.opacity(0.6) : FactumTheme.secondaryText)
+                            .font(.system(size: 15, weight: .medium, design: .serif))
+                            .foregroundStyle(isCamera ? .white.opacity(0.6) : PigeonTheme.secondaryText)
                     }
                     
                     // Discard
@@ -2082,7 +2276,7 @@ struct TimelapseCameraView: View {
                         showDiscardConfirm = true
                     } label: {
                         Text("Discard")
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.system(size: 13, weight: .medium, design: .serif))
                             .foregroundStyle(.red.opacity(0.7))
                     }
                 }
@@ -2091,15 +2285,19 @@ struct TimelapseCameraView: View {
         }
         .transition(.opacity)
         .animation(.easeInOut(duration: 0.2), value: captureManager.isPaused)
-        .alert("Discard Session?", isPresented: $showDiscardConfirm) {
-            Button("Discard", role: .destructive) {
+        .alert("End session without posting?", isPresented: $showDiscardConfirm) {
+            Button("End Session", role: .destructive) {
+                // Save a final snapshot before cleanup so the session is
+                // recovered on next app launch. Study time is never lost.
                 captureManager.stopRecording()
-                captureManager.cleanup()
+                captureManager.saveSessionSnapshot()
+                // Cleanup without clearing the snapshot — next launch will recover it
+                captureManager.cleanupWithoutClearingSnapshot()
                 dismiss()
             }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("Your study time and recording will be lost.")
+            Text("Your study time will be saved and recovered next time you open the app.")
         }
     }
     
@@ -2132,11 +2330,52 @@ struct TimelapseCameraView: View {
         return String(format: "%02d:%02d:%02d", hours, minutes, seconds)
     }
     
-    // MARK: - Screen Dimming
+    // MARK: - Live Activity (Dynamic Island)
     
-    /// The dimmed brightness level — low enough to save battery but
-    /// bright enough that the camera feed is still visible.
-    private let dimmedBrightness: CGFloat = 0.05
+    private func startLiveActivity() {
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+        let attributes = StudySessionAttributes(
+            subject: captureManager.currentSubject,
+            startDate: Date().addingTimeInterval(-Double(captureManager.elapsedSeconds))
+        )
+        let state = StudySessionAttributes.ContentState(
+            elapsedSeconds: captureManager.elapsedSeconds,
+            isPaused: captureManager.isPaused
+        )
+        do {
+            studyActivity = try Activity.request(
+                attributes: attributes,
+                content: .init(state: state, staleDate: nil)
+            )
+        } catch {
+            print("[LIVE ACTIVITY] Failed to start: \(error)")
+        }
+    }
+    
+    private func updateLiveActivity() {
+        guard let studyActivity else { return }
+        let state = StudySessionAttributes.ContentState(
+            elapsedSeconds: captureManager.elapsedSeconds,
+            isPaused: captureManager.isPaused
+        )
+        Task {
+            await studyActivity.update(.init(state: state, staleDate: nil))
+        }
+    }
+    
+    private func endLiveActivity() {
+        guard let studyActivity else { return }
+        let finalState = StudySessionAttributes.ContentState(
+            elapsedSeconds: captureManager.elapsedSeconds,
+            isPaused: false
+        )
+        Task {
+            await studyActivity.end(.init(state: finalState, staleDate: nil), dismissalPolicy: .immediate)
+        }
+        self.studyActivity = nil
+    }
+    
+    // MARK: - Screen Dimming (visual overlay only)
     
     private func scheduleDim() {
         cancelDimTimer()
@@ -2151,35 +2390,14 @@ struct TimelapseCameraView: View {
                 withAnimation(.easeInOut(duration: 1.0)) {
                     self.isDimmed = true
                 }
-                self.savedBrightness = UIScreen.main.brightness
-                // Gradually lower brightness instead of snapping to black
-                self.animateBrightness(to: self.dimmedBrightness, duration: 1.0)
             }
         }
     }
     
-    /// Smoothly animates UIScreen brightness over the given duration using a cancellable timer.
-    private func animateBrightness(to target: CGFloat, duration: TimeInterval) {
-        brightnessTimer?.invalidate()
-        let current = UIScreen.main.brightness
-        let steps = 20
-        let stepDuration = duration / Double(steps)
-        let delta = (target - current) / CGFloat(steps)
-        var step = 0
-        brightnessTimer = Timer.scheduledTimer(withTimeInterval: stepDuration, repeats: true) { timer in
-            step += 1
-            UIScreen.main.brightness = current + delta * CGFloat(step)
-            if step >= steps { timer.invalidate() }
-        }
-    }
-    
     private func wakeScreen() {
-        brightnessTimer?.invalidate()
-        brightnessTimer = nil
         withAnimation(.easeInOut(duration: 0.2)) {
             isDimmed = false
         }
-        animateBrightness(to: savedBrightness, duration: 0.3)
         // Re-schedule dimming after inactivity
         scheduleDim()
     }
@@ -2190,10 +2408,7 @@ struct TimelapseCameraView: View {
     }
     
     private func restoreBrightness() {
-        brightnessTimer?.invalidate()
-        brightnessTimer = nil
         if isDimmed {
-            UIScreen.main.brightness = savedBrightness
             isDimmed = false
         }
     }
@@ -2319,4 +2534,455 @@ struct CameraPreviewView: UIViewRepresentable {
     }
 }
 
+// MARK: - Unlock Animation: Pigeon Fly
 
+/// The pigeon mascot swoops in, grabs the lock, and flies away
+struct UnlockAnim_PigeonFly: View {
+    let fg: Color
+    let fg2: Color
+    
+    @State private var pigeonX: CGFloat = -80
+    @State private var pigeonY: CGFloat = 20
+    @State private var lockOpacity: Double = 1.0
+    @State private var lockX: CGFloat = 0
+    @State private var lockY: CGFloat = 0
+    @State private var showText = false
+    
+    var body: some View {
+        ZStack {
+            // Lock that gets carried away
+            Image(systemName: "lock.fill")
+                .font(.system(size: 24, weight: .light))
+                .foregroundStyle(fg.opacity(lockOpacity))
+                .offset(x: lockX, y: lockY)
+            
+            // Pigeon (simplified line art)
+            Canvas { ctx, size in
+                let cx = size.width / 2
+                let cy = size.height / 2
+                var path = Path()
+                // Body
+                path.addEllipse(in: CGRect(x: cx - 14, y: cy - 6, width: 28, height: 16))
+                // Head
+                path.addEllipse(in: CGRect(x: cx - 20, y: cy - 14, width: 14, height: 12))
+                // Beak
+                path.move(to: CGPoint(x: cx - 22, y: cy - 8))
+                path.addLine(to: CGPoint(x: cx - 28, y: cy - 6))
+                path.addLine(to: CGPoint(x: cx - 22, y: cy - 4))
+                // Wing (flapping)
+                path.move(to: CGPoint(x: cx - 4, y: cy - 6))
+                path.addLine(to: CGPoint(x: cx, y: cy - 22))
+                path.addLine(to: CGPoint(x: cx + 10, y: cy - 6))
+                // Top hat
+                path.move(to: CGPoint(x: cx - 22, y: cy - 14))
+                path.addLine(to: CGPoint(x: cx - 8, y: cy - 14))
+                path.addRect(CGRect(x: cx - 20, y: cy - 22, width: 10, height: 8))
+                ctx.stroke(path, with: .color(fg), lineWidth: 1.5)
+                // Eye
+                ctx.fill(Path(ellipseIn: CGRect(x: cx - 16, y: cy - 11, width: 3, height: 3)), with: .color(fg))
+            }
+            .frame(width: 60, height: 50)
+            .offset(x: pigeonX, y: pigeonY)
+            
+            // "UNLOCKED" text
+            if showText {
+                Text("UNLOCKED")
+                    .font(.system(size: 11, weight: .regular, design: .serif))
+                    .tracking(4)
+                    .foregroundStyle(fg2)
+                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
+            }
+        }
+        .onAppear {
+            // Pigeon flies in from left
+            withAnimation(.easeInOut(duration: 0.5)) {
+                pigeonX = 0
+                pigeonY = 0
+            }
+            // Pigeon grabs lock and flies out right
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                withAnimation(.easeIn(duration: 0.6)) {
+                    pigeonX = 120
+                    pigeonY = -40
+                    lockX = 120
+                    lockY = -40
+                    lockOpacity = 0
+                }
+            }
+            // Show text
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                withAnimation(.easeOut(duration: 0.4)) {
+                    showText = true
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Unlock Animation: Lock Shatter
+
+/// The lock shakes violently then shatters into fragments
+struct UnlockAnim_LockShatter: View {
+    let fg: Color
+    let fg2: Color
+    
+    @State private var shakeAmount: CGFloat = 0
+    @State private var shattered = false
+    @State private var fragments: [(x: CGFloat, y: CGFloat, rot: Double, opacity: Double)] = Array(repeating: (0, 0, 0, 1), count: 6)
+    @State private var showText = false
+    
+    var body: some View {
+        ZStack {
+            if !shattered {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 32, weight: .light))
+                    .foregroundStyle(fg)
+                    .offset(x: shakeAmount)
+            } else {
+                // Shattered pieces
+                ForEach(0..<6, id: \.self) { i in
+                    Image(systemName: ["lock.slash", "triangle.fill", "diamond.fill", "square.fill", "circle.fill", "star.fill"][i])
+                        .font(.system(size: [12, 8, 7, 9, 6, 8][i]))
+                        .foregroundStyle(fg.opacity(fragments[i].opacity))
+                        .offset(x: fragments[i].x, y: fragments[i].y)
+                        .rotationEffect(.degrees(fragments[i].rot))
+                }
+            }
+            
+            if showText {
+                Text("UNLOCKED")
+                    .font(.system(size: 11, weight: .regular, design: .serif))
+                    .tracking(4)
+                    .foregroundStyle(fg2)
+                    .transition(.opacity)
+            }
+        }
+        .onAppear {
+            // Shake phase
+            let shakeTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { timer in
+                shakeAmount = CGFloat.random(in: -6...6)
+            }
+            
+            // Shatter after shaking
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                shakeTimer.invalidate()
+                shakeAmount = 0
+                Haptics.heavy()
+                withAnimation(.none) {
+                    shattered = true
+                }
+                // Fly fragments outward
+                let angles: [CGFloat] = [-60, -30, 0, 30, 60, 90]
+                withAnimation(.easeOut(duration: 0.7)) {
+                    for i in 0..<6 {
+                        let rad = angles[i] * .pi / 180
+                        let dist: CGFloat = CGFloat.random(in: 50...90)
+                        fragments[i] = (
+                            x: cos(rad) * dist,
+                            y: sin(rad) * dist - 20,
+                            rot: Double.random(in: -180...180),
+                            opacity: 0
+                        )
+                    }
+                }
+            }
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+                withAnimation(.easeOut(duration: 0.4)) {
+                    showText = true
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Unlock Animation: Lock Melt
+
+/// The lock melts downward like it's made of wax
+struct UnlockAnim_LockMelt: View {
+    let fg: Color
+    let fg2: Color
+    
+    @State private var scaleY: CGFloat = 1.0
+    @State private var scaleX: CGFloat = 1.0
+    @State private var yOffset: CGFloat = 0
+    @State private var opacity: Double = 1.0
+    @State private var showText = false
+    
+    var body: some View {
+        ZStack {
+            Image(systemName: "lock.fill")
+                .font(.system(size: 32, weight: .light))
+                .foregroundStyle(fg.opacity(opacity))
+                .scaleEffect(x: scaleX, y: scaleY, anchor: .bottom)
+                .offset(y: yOffset)
+            
+            if showText {
+                Text("UNLOCKED")
+                    .font(.system(size: 11, weight: .regular, design: .serif))
+                    .tracking(4)
+                    .foregroundStyle(fg2)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+        }
+        .onAppear {
+            // Phase 1: Wobble slightly
+            withAnimation(.easeInOut(duration: 0.3).repeatCount(2, autoreverses: true)) {
+                scaleX = 1.1
+            }
+            // Phase 2: Melt down
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                withAnimation(.easeIn(duration: 0.7)) {
+                    scaleY = 0.1
+                    scaleX = 1.8
+                    yOffset = 20
+                    opacity = 0
+                }
+            }
+            // Phase 3: Show text
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+                withAnimation(.easeOut(duration: 0.4)) {
+                    showText = true
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Unlock Animation: Key Turn
+
+/// A key slides in from the side, inserts into the lock, and turns
+struct UnlockAnim_KeyTurn: View {
+    let fg: Color
+    let fg2: Color
+    
+    @State private var keyX: CGFloat = -80
+    @State private var keyRotation: Double = 0
+    @State private var lockSymbol = "lock.fill"
+    @State private var showText = false
+    @State private var lockScale: CGFloat = 1.0
+    @State private var lockOpacity: Double = 1.0
+    
+    var body: some View {
+        ZStack {
+            // Lock
+            Image(systemName: lockSymbol)
+                .font(.system(size: 28, weight: .light))
+                .foregroundStyle(fg.opacity(lockOpacity))
+                .scaleEffect(lockScale)
+            
+            // Key
+            Image(systemName: "key.fill")
+                .font(.system(size: 22, weight: .light))
+                .foregroundStyle(fg)
+                .rotationEffect(.degrees(keyRotation))
+                .offset(x: keyX, y: 2)
+            
+            if showText {
+                Text("UNLOCKED")
+                    .font(.system(size: 11, weight: .regular, design: .serif))
+                    .tracking(4)
+                    .foregroundStyle(fg2)
+                    .transition(.opacity)
+            }
+        }
+        .onAppear {
+            // Key slides in
+            withAnimation(.easeOut(duration: 0.4)) {
+                keyX = 4
+            }
+            // Key turns
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                Haptics.medium()
+                withAnimation(.easeInOut(duration: 0.4)) {
+                    keyRotation = 90
+                }
+            }
+            // Lock opens
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+                Haptics.light()
+                lockSymbol = "lock.open"
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.5)) {
+                    lockScale = 1.2
+                }
+            }
+            // Both fade
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) {
+                withAnimation(.easeOut(duration: 0.3)) {
+                    lockOpacity = 0
+                    keyX = 80
+                    showText = true
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Unlock Animation: Lock Shrink Pop
+
+/// The lock shrinks down to a tiny dot then pops with a burst
+struct UnlockAnim_LockShrink: View {
+    let fg: Color
+    let fg2: Color
+    
+    @State private var lockScale: CGFloat = 1.0
+    @State private var lockOpacity: Double = 1.0
+    @State private var popped = false
+    @State private var ringScale: CGFloat = 0.3
+    @State private var ringOpacity: Double = 1.0
+    @State private var showText = false
+    
+    var body: some View {
+        ZStack {
+            // Pop ring
+            if popped {
+                Circle()
+                    .stroke(fg.opacity(ringOpacity), lineWidth: 2)
+                    .frame(width: 60, height: 60)
+                    .scaleEffect(ringScale)
+            }
+            
+            // Lock
+            if !popped {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 32, weight: .light))
+                    .foregroundStyle(fg.opacity(lockOpacity))
+                    .scaleEffect(lockScale)
+            }
+            
+            if showText {
+                Text("UNLOCKED")
+                    .font(.system(size: 11, weight: .regular, design: .serif))
+                    .tracking(4)
+                    .foregroundStyle(fg2)
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+            }
+        }
+        .onAppear {
+            // Shrink with slight wobble
+            withAnimation(.easeIn(duration: 0.6)) {
+                lockScale = 0.1
+            }
+            // Pop!
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                Haptics.heavy()
+                popped = true
+                withAnimation(.easeOut(duration: 0.5)) {
+                    ringScale = 2.5
+                    ringOpacity = 0
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                withAnimation(.easeOut(duration: 0.4)) {
+                    showText = true
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Unlock Animation: Pigeon Peck
+
+/// A pigeon appears and pecks at the lock until it breaks open
+struct UnlockAnim_PigeonPeck: View {
+    let fg: Color
+    let fg2: Color
+    
+    @State private var pigeonY: CGFloat = -50
+    @State private var peckPhase: Int = 0
+    @State private var headDip: CGFloat = 0
+    @State private var lockHits: Int = 0
+    @State private var lockShake: CGFloat = 0
+    @State private var lockOpen = false
+    @State private var lockFade: Double = 1.0
+    @State private var showText = false
+    
+    var body: some View {
+        ZStack {
+            // Lock
+            Image(systemName: lockOpen ? "lock.open" : "lock.fill")
+                .font(.system(size: 24, weight: .light))
+                .foregroundStyle(fg.opacity(lockFade))
+                .offset(x: lockShake, y: 10)
+            
+            // Pigeon pecking from above
+            Canvas { ctx, size in
+                let cx = size.width / 2
+                let cy = size.height / 2 + headDip
+                var path = Path()
+                // Body
+                path.addEllipse(in: CGRect(x: cx - 12, y: cy - 5, width: 24, height: 14))
+                // Head
+                path.addEllipse(in: CGRect(x: cx - 4, y: cy + 5, width: 12, height: 10))
+                // Beak (pointing down for pecking)
+                path.move(to: CGPoint(x: cx + 2, y: cy + 15))
+                path.addLine(to: CGPoint(x: cx + 4, y: cy + 22))
+                path.addLine(to: CGPoint(x: cx + 6, y: cy + 15))
+                // Wings
+                path.move(to: CGPoint(x: cx - 12, y: cy - 2))
+                path.addLine(to: CGPoint(x: cx - 20, y: cy - 12))
+                path.move(to: CGPoint(x: cx + 12, y: cy - 2))
+                path.addLine(to: CGPoint(x: cx + 20, y: cy - 12))
+                // Top hat
+                path.move(to: CGPoint(x: cx - 6, y: cy - 5))
+                path.addLine(to: CGPoint(x: cx + 6, y: cy - 5))
+                path.addRect(CGRect(x: cx - 4, y: cy - 12, width: 8, height: 7))
+                ctx.stroke(path, with: .color(fg), lineWidth: 1.5)
+                // Eye
+                ctx.fill(Path(ellipseIn: CGRect(x: cx + 1, y: cy + 8, width: 2.5, height: 2.5)), with: .color(fg))
+            }
+            .frame(width: 50, height: 50)
+            .offset(y: pigeonY)
+            
+            if showText {
+                Text("UNLOCKED")
+                    .font(.system(size: 11, weight: .regular, design: .serif))
+                    .tracking(4)
+                    .foregroundStyle(fg2)
+                    .offset(y: 40)
+                    .transition(.opacity)
+            }
+        }
+        .onAppear {
+            // Pigeon drops in
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+                pigeonY = -30
+            }
+            // Pecking sequence
+            func peck(at delay: Double) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    // Dip head down
+                    withAnimation(.easeIn(duration: 0.08)) {
+                        headDip = 6
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                        Haptics.light()
+                        lockShake = CGFloat.random(in: -4...4)
+                        withAnimation(.easeOut(duration: 0.08)) {
+                            headDip = 0
+                            lockShake = 0
+                        }
+                    }
+                }
+            }
+            peck(at: 0.4)
+            peck(at: 0.6)
+            peck(at: 0.8)
+            
+            // Lock breaks open
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.95) {
+                Haptics.success()
+                lockOpen = true
+                withAnimation(.easeOut(duration: 0.3)) {
+                    lockFade = 0.3
+                    pigeonY = -60
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) {
+                withAnimation(.easeOut(duration: 0.3)) {
+                    showText = true
+                }
+            }
+        }
+    }
+}

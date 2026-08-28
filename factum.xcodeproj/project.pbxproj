@@ -7,11 +7,21 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C100D57D3040C6A100DC9E2D /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C100D57C3040C6A100DC9E2D /* WidgetKit.framework */; };
+		C100D57F3040C6A100DC9E2D /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C100D57E3040C6A100DC9E2D /* SwiftUI.framework */; };
+		C100D58C3040C6A200DC9E2D /* factumappExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = C100D57A3040C6A100DC9E2D /* factumappExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		C153BAD6300693B70034A517 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = C153BAD5300693B70034A517 /* GoogleSignIn */; };
 		C155646A300AFDE500F86036 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = C1556469300AFDE500F86036 /* Supabase */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		C100D58A3040C6A200DC9E2D /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = C1945A3F300301F300B63D5D /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = C100D5793040C6A100DC9E2D;
+			remoteInfo = factumappExtension;
+		};
 		C1945A57300301F300B63D5D /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = C1945A3F300301F300B63D5D /* Project object */;
@@ -28,13 +38,48 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		C100D5913040C6A200DC9E2D /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				C100D58C3040C6A200DC9E2D /* factumappExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
-		C1945A47300301F300B63D5D /* factum.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = factum.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C100D57A3040C6A100DC9E2D /* factumappExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = factumappExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		C100D57C3040C6A100DC9E2D /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		C100D57E3040C6A100DC9E2D /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		C1945A47300301F300B63D5D /* pigeon.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = pigeon.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C1945A56300301F300B63D5D /* factumn.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = factumn.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		C1945A60300301F300B63D5D /* we got strava but for studying type shiUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "we got strava but for studying type shiUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		C100D58D3040C6A200DC9E2D /* Exceptions for "factumapp" folder in "factumappExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = C100D5793040C6A100DC9E2D /* factumappExtension */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		C100D5803040C6A100DC9E2D /* factumapp */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				C100D58D3040C6A200DC9E2D /* Exceptions for "factumapp" folder in "factumappExtension" target */,
+			);
+			path = factumapp;
+			sourceTree = "<group>";
+		};
 		C1945A49300301F300B63D5D /* factum1 */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = factum1;
@@ -43,6 +88,15 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		C100D5773040C6A100DC9E2D /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C100D57F3040C6A100DC9E2D /* SwiftUI.framework in Frameworks */,
+				C100D57D3040C6A100DC9E2D /* WidgetKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		C1945A44300301F300B63D5D /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -69,10 +123,21 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		C100D57B3040C6A100DC9E2D /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				C100D57C3040C6A100DC9E2D /* WidgetKit.framework */,
+				C100D57E3040C6A100DC9E2D /* SwiftUI.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		C1945A3E300301F300B63D5D = {
 			isa = PBXGroup;
 			children = (
 				C1945A49300301F300B63D5D /* factum1 */,
+				C100D5803040C6A100DC9E2D /* factumapp */,
+				C100D57B3040C6A100DC9E2D /* Frameworks */,
 				C1945A48300301F300B63D5D /* Products */,
 			);
 			sourceTree = "<group>";
@@ -80,9 +145,10 @@
 		C1945A48300301F300B63D5D /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				C1945A47300301F300B63D5D /* factum.app */,
+				C1945A47300301F300B63D5D /* pigeon.app */,
 				C1945A56300301F300B63D5D /* factumn.xctest */,
 				C1945A60300301F300B63D5D /* we got strava but for studying type shiUITests.xctest */,
+				C100D57A3040C6A100DC9E2D /* factumappExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -90,28 +156,52 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		C1945A46300301F300B63D5D /* factum */ = {
+		C100D5793040C6A100DC9E2D /* factumappExtension */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = C1945A6A300301F300B63D5D /* Build configuration list for PBXNativeTarget "factum" */;
+			buildConfigurationList = C100D58E3040C6A200DC9E2D /* Build configuration list for PBXNativeTarget "factumappExtension" */;
 			buildPhases = (
-				C1945A43300301F300B63D5D /* Sources */,
-				C1945A44300301F300B63D5D /* Frameworks */,
-				C1945A45300301F300B63D5D /* Resources */,
+				C100D5763040C6A100DC9E2D /* Sources */,
+				C100D5773040C6A100DC9E2D /* Frameworks */,
+				C100D5783040C6A100DC9E2D /* Resources */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
+				C100D5803040C6A100DC9E2D /* factumapp */,
+			);
+			name = factumappExtension;
+			packageProductDependencies = (
+			);
+			productName = factumappExtension;
+			productReference = C100D57A3040C6A100DC9E2D /* factumappExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		C1945A46300301F300B63D5D /* pigeon */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C1945A6A300301F300B63D5D /* Build configuration list for PBXNativeTarget "pigeon" */;
+			buildPhases = (
+				C1945A43300301F300B63D5D /* Sources */,
+				C1945A44300301F300B63D5D /* Frameworks */,
+				C1945A45300301F300B63D5D /* Resources */,
+				C100D5913040C6A200DC9E2D /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				C100D58B3040C6A200DC9E2D /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
 				C1945A49300301F300B63D5D /* factum1 */,
 			);
-			name = factum;
+			name = pigeon;
 			packageProductDependencies = (
 				C153BAD5300693B70034A517 /* GoogleSignIn */,
 				C1556469300AFDE500F86036 /* Supabase */,
 			);
 			productName = "we got strava but for studying type shi";
-			productReference = C1945A47300301F300B63D5D /* factum.app */;
+			productReference = C1945A47300301F300B63D5D /* pigeon.app */;
 			productType = "com.apple.product-type.application";
 		};
 		C1945A55300301F300B63D5D /* factumn */ = {
@@ -164,6 +254,9 @@
 				LastSwiftUpdateCheck = 2630;
 				LastUpgradeCheck = 2630;
 				TargetAttributes = {
+					C100D5793040C6A100DC9E2D = {
+						CreatedOnToolsVersion = 26.3;
+					};
 					C1945A46300301F300B63D5D = {
 						CreatedOnToolsVersion = 26.3;
 					};
@@ -195,14 +288,22 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				C1945A46300301F300B63D5D /* factum */,
+				C1945A46300301F300B63D5D /* pigeon */,
 				C1945A55300301F300B63D5D /* factumn */,
 				C1945A5F300301F300B63D5D /* we got strava but for studying type shiUITests */,
+				C100D5793040C6A100DC9E2D /* factumappExtension */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		C100D5783040C6A100DC9E2D /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		C1945A45300301F300B63D5D /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -227,6 +328,13 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		C100D5763040C6A100DC9E2D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		C1945A43300301F300B63D5D /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -251,19 +359,84 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		C100D58B3040C6A200DC9E2D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = C100D5793040C6A100DC9E2D /* factumappExtension */;
+			targetProxy = C100D58A3040C6A200DC9E2D /* PBXContainerItemProxy */;
+		};
 		C1945A58300301F300B63D5D /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = C1945A46300301F300B63D5D /* factum */;
+			target = C1945A46300301F300B63D5D /* pigeon */;
 			targetProxy = C1945A57300301F300B63D5D /* PBXContainerItemProxy */;
 		};
 		C1945A62300301F300B63D5D /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = C1945A46300301F300B63D5D /* factum */;
+			target = C1945A46300301F300B63D5D /* pigeon */;
 			targetProxy = C1945A61300301F300B63D5D /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		C100D58F3040C6A200DC9E2D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 9JFX47U37Y;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = factumapp/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = pigeonapp;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.macos.factum.factumapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		C100D5903040C6A200DC9E2D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 9JFX47U37Y;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = factumapp/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = pigeonapp;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.macos.factum.factumapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 		C1945A68300301F300B63D5D /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -394,7 +567,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Factum-Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = Factum;
+				INFOPLIST_KEY_CFBundleDisplayName = Pigeon;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.education";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Factum needs camera access to record study timelapse videos";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -432,7 +605,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Factum-Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = Factum;
+				INFOPLIST_KEY_CFBundleDisplayName = Pigeon;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.education";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Factum needs camera access to record study timelapse videos";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -542,6 +715,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		C100D58E3040C6A200DC9E2D /* Build configuration list for PBXNativeTarget "factumappExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C100D58F3040C6A200DC9E2D /* Debug */,
+				C100D5903040C6A200DC9E2D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		C1945A42300301F300B63D5D /* Build configuration list for PBXProject "factum" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -551,7 +733,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		C1945A6A300301F300B63D5D /* Build configuration list for PBXNativeTarget "factum" */ = {
+		C1945A6A300301F300B63D5D /* Build configuration list for PBXNativeTarget "pigeon" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				C1945A6B300301F300B63D5D /* Debug */,

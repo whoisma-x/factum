@@ -1,123 +1,50 @@
 //
 //  GlassesIcon.swift
-//  Factum
+//  Pigeon
 //
-//  Glasses icon — bridge and circular frames only, no sidepieces
+//  Pigeon mascot — elegant line-art portrait with graduation cap & monocle
 //
 
 import SwiftUI
 
-/// Inline icon used in navigation bars and tab bars
-struct FactumIcon: View {
+/// Inline pigeon mascot icon used throughout the app.
+/// Uses the original pigeon line-art image as a template, tinted to the given color.
+struct PigeonIcon: View {
     var size: CGFloat = 40
-    var color: Color = .white
+    var color: Color = Color(red: 0.98, green: 0.96, blue: 0.90)
 
     var body: some View {
-        Canvas { context, canvasSize in
-            let w = canvasSize.width
-            let h = canvasSize.height
-            let stroke = w * 0.04
-
-            // Lens radius — each circular frame
-            let lensR = w * 0.22
-            let centerY = h * 0.5
-
-            // Left and right lens centers — spaced so circles don't overlap
-            let gap = w * 0.06
-            let leftCX = w * 0.5 - lensR - gap / 2
-            let rightCX = w * 0.5 + lensR + gap / 2
-
-            // Left lens circle
-            let leftLens = Path(ellipseIn: CGRect(
-                x: leftCX - lensR, y: centerY - lensR,
-                width: lensR * 2, height: lensR * 2
-            ))
-            context.stroke(leftLens, with: .color(color), lineWidth: stroke)
-
-            // Right lens circle
-            let rightLens = Path(ellipseIn: CGRect(
-                x: rightCX - lensR, y: centerY - lensR,
-                width: lensR * 2, height: lensR * 2
-            ))
-            context.stroke(rightLens, with: .color(color), lineWidth: stroke)
-
-            // Bridge connecting the two lenses (arc curving upward)
-            let bridgeLeft = leftCX + lensR
-            let bridgeRight = rightCX - lensR
-            var bridge = Path()
-            bridge.move(to: CGPoint(x: bridgeLeft, y: centerY))
-            bridge.addQuadCurve(
-                to: CGPoint(x: bridgeRight, y: centerY),
-                control: CGPoint(x: w * 0.5, y: centerY - w * 0.10)
-            )
-            context.stroke(bridge, with: .color(color),
-                          style: StrokeStyle(lineWidth: stroke, lineCap: .round))
-        }
-        .frame(width: size, height: size)
+        Image("PigeonLogo")
+            .renderingMode(.template)
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .foregroundStyle(color)
+            .frame(width: size, height: size)
     }
 }
 
-/// App icon version — solid background with centered glasses
-struct FactumAppIcon: View {
+/// App icon version — solid background with centered pigeon
+struct PigeonAppIcon: View {
     var body: some View {
         ZStack {
-            // Deep charcoal background
             Color(white: 0.06)
-
-            Canvas { context, canvasSize in
-                let w = canvasSize.width
-                let h = canvasSize.height
-                let stroke = w * 0.04
-
-                // Lens radius
-                let lensR = w * 0.22
-                let centerY = h * 0.5
-
-                // Left and right lens centers — spaced so circles don't overlap
-                let gap = w * 0.06
-                let leftCX = w * 0.5 - lensR - gap / 2
-                let rightCX = w * 0.5 + lensR + gap / 2
-
-                // Left lens circle
-                let leftLens = Path(ellipseIn: CGRect(
-                    x: leftCX - lensR, y: centerY - lensR,
-                    width: lensR * 2, height: lensR * 2
-                ))
-                context.stroke(leftLens, with: .color(.white), lineWidth: stroke)
-
-                // Right lens circle
-                let rightLens = Path(ellipseIn: CGRect(
-                    x: rightCX - lensR, y: centerY - lensR,
-                    width: lensR * 2, height: lensR * 2
-                ))
-                context.stroke(rightLens, with: .color(.white), lineWidth: stroke)
-
-                // Bridge connecting the two lenses
-                let bridgeLeft = leftCX + lensR
-                let bridgeRight = rightCX - lensR
-                var bridge = Path()
-                bridge.move(to: CGPoint(x: bridgeLeft, y: centerY))
-                bridge.addQuadCurve(
-                    to: CGPoint(x: bridgeRight, y: centerY),
-                    control: CGPoint(x: w * 0.5, y: centerY - w * 0.10)
-                )
-                context.stroke(bridge, with: .color(.white),
-                              style: StrokeStyle(lineWidth: stroke, lineCap: .round))
-            }
+            PigeonIcon(size: 500)
+                .scaleEffect(0.55)
         }
     }
 }
 
-#Preview("Glasses Icon") {
+#Preview("Pigeon Mascot") {
     ZStack {
         Color.black.ignoresSafeArea()
         VStack(spacing: 30) {
-            FactumIcon(size: 48, color: .white)
-            FactumIcon(size: 80, color: .white)
-            FactumAppIcon()
+            PigeonIcon(size: 48)
+            PigeonIcon(size: 80)
+            PigeonIcon(size: 160)
+            PigeonAppIcon()
                 .frame(width: 200, height: 200)
                 .clipShape(RoundedRectangle(cornerRadius: 40))
-            FactumAppIcon()
+            PigeonAppIcon()
                 .frame(width: 120, height: 120)
                 .clipShape(RoundedRectangle(cornerRadius: 26))
         }

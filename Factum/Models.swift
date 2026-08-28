@@ -1,15 +1,15 @@
 //
 //  Models.swift
-//  Factum
+//  Pigeon
 //
-//  Data models for Factum
+//  Data models for Pigeon
 //
 
 import Foundation
 import SwiftData
 
 /// Cached documents directory to avoid repeated FileManager lookups.
-private let factumDocumentsDirectory: URL = {
+private let pigeonDocumentsDirectory: URL = {
     FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
 }()
 
@@ -18,7 +18,7 @@ private let factumDocumentsDirectory: URL = {
 /// Tracks timelapse IDs that were deleted locally but may not yet be deleted from
 /// the cloud. syncTimelapses checks this to avoid re-inserting deleted posts.
 enum PendingDeleteStore {
-    private static let key = "factum_pending_deletes"
+    private static let key = "pigeon_pending_deletes"
     
     static func ids() -> Set<String> {
         Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
@@ -44,7 +44,7 @@ enum PendingDeleteStore {
 // MARK: - Subject Segment
 
 /// A time segment during which the user studied a specific subject.
-struct SubjectSegment: Codable, Identifiable {
+struct SubjectSegment: Codable, Identifiable, Sendable {
     var id = UUID()
     let subject: String
     let seconds: Int
@@ -57,6 +57,7 @@ final class UserProfile {
     var id: UUID
     var firebaseUID: String?       // Auth UID — primary cloud identifier
     var displayName: String
+    var username: String?          // Unique @handle (lowercase, no @ stored)
     var email: String
     var avatarURL: String?
     var bio: String
@@ -68,17 +69,21 @@ final class UserProfile {
     var friendUIDs: [String]
     var pendingFriendRequestUIDs: [String]
     var groupIDs: [UUID]
-    
+    var isPrivate: Bool = true
+
     init(
         displayName: String,
         email: String,
         firebaseUID: String? = nil,
+        username: String? = nil,
         avatarURL: String? = nil,
-        bio: String = ""
+        bio: String = "",
+        isPrivate: Bool = true
     ) {
         self.id = UUID()
         self.firebaseUID = firebaseUID
         self.displayName = displayName
+        self.username = username
         self.email = email
         self.avatarURL = avatarURL
         self.bio = bio
@@ -88,6 +93,7 @@ final class UserProfile {
         self.friendUIDs = []
         self.pendingFriendRequestUIDs = []
         self.groupIDs = []
+        self.isPrivate = isPrivate
     }
 }
 
@@ -115,24 +121,43 @@ final class StudyTimelapse {
     var commentCount: Int
     var googlePhotosBackedUp: Bool
     var appLeaveCount: Int = 0
+    var offTaskSeconds: Int = 0
     var subjectSegmentsJSON: String? // JSON-encoded [SubjectSegment]
+    var cloudSynced: Bool = false    // true once successfully uploaded to Supabase
+    var syncRetryCount: Int = 0      // number of failed sync attempts (for backoff)
+    var lastSyncAttempt: Date?       // when the last sync attempt was made
     
+    /// Cache for decoded subject segments, invalidated when JSON changes.
+    @Transient private var _cachedSegments: [SubjectSegment]?
+    @Transient private var _cachedJSON: String?
+
     /// Decoded subject segments. Returns a single segment from `subject` + `durationSeconds` if no JSON is stored (backwards compatibility).
     var subjectSegments: [SubjectSegment] {
         get {
+            // Return cached value if JSON hasn't changed
+            if let cached = _cachedSegments, _cachedJSON == subjectSegmentsJSON {
+                return cached
+            }
+            let result: [SubjectSegment]
             if let json = subjectSegmentsJSON,
                let data = json.data(using: .utf8),
                let segments = try? JSONDecoder().decode([SubjectSegment].self, from: data),
                !segments.isEmpty {
-                return segments
+                result = segments
+            } else {
+                // Fallback: single segment from the legacy subject field
+                result = [SubjectSegment(subject: subject, seconds: durationSeconds)]
             }
-            // Fallback: single segment from the legacy subject field
-            return [SubjectSegment(subject: subject, seconds: durationSeconds)]
+            _cachedSegments = result
+            _cachedJSON = subjectSegmentsJSON
+            return result
         }
         set {
             if let data = try? JSONEncoder().encode(newValue) {
                 subjectSegmentsJSON = String(data: data, encoding: .utf8)
             }
+            _cachedSegments = newValue
+            _cachedJSON = subjectSegmentsJSON
         }
     }
     
@@ -146,7 +171,7 @@ final class StudyTimelapse {
     var videoURL: URL? {
         // Try local file first
         if let videoFileName {
-            let url = factumDocumentsDirectory.appendingPathComponent(videoFileName)
+            let url = pigeonDocumentsDirectory.appendingPathComponent(videoFileName)
             if FileManager.default.fileExists(atPath: url.path) {
                 return url
             }
@@ -203,27 +228,6 @@ final class StudyTimelapse {
     }
 }
 
-// MARK: - Comment
-
-@Model
-final class TimelapseComment {
-    var id: UUID
-    var timelapseID: UUID
-    var authorID: String           // Auth UID
-    var authorName: String
-    var text: String
-    var createdAt: Date
-    
-    init(timelapseID: UUID, authorID: String, authorName: String, text: String) {
-        self.id = UUID()
-        self.timelapseID = timelapseID
-        self.authorID = authorID
-        self.authorName = authorName
-        self.text = text
-        self.createdAt = Date()
-    }
-}
-
 // MARK: - Study Group
 
 @Model
@@ -231,12 +235,12 @@ final class StudyGroup {
     var id: UUID
     var name: String
     var groupDescription: String
-    var creatorID: UUID
-    var memberIDs: [UUID]
+    var creatorID: String           // Auth UID of the creator
+    var memberIDs: [String]         // Auth UIDs of all members
     var createdAt: Date
     var iconName: String
     
-    init(name: String, groupDescription: String, creatorID: UUID, iconName: String = "book.fill") {
+    init(name: String, groupDescription: String, creatorID: String, iconName: String = "book.fill") {
         self.id = UUID()
         self.name = name
         self.groupDescription = groupDescription

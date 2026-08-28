@@ -1,6 +1,6 @@
 //
 //  StorageService.swift
-//  Factum
+//  Pigeon
 //
 //  Supabase Storage for video, thumbnail, and avatar uploads
 //
@@ -9,7 +9,7 @@ import Foundation
 import UIKit
 import Supabase
 
-final class StorageService {
+final class StorageService: Sendable {
     static let shared = StorageService()
     
     private init() {}

@@ -1,6 +1,6 @@
 //
 //  GooglePhotosService.swift
-//  Factum
+//  Pigeon
 //
 //  Google Photos backup via REST API
 //

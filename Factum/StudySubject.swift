@@ -1,6 +1,6 @@
 //
 //  StudySubject.swift
-//  Factum
+//  Pigeon
 //
 //  Subject model with color coding for study sessions
 //
@@ -66,12 +66,24 @@ final class StudySubject {
     }
     
     // MARK: - Color Lookup
-    
+
+    /// Builds a case-insensitive lookup dictionary from an array of subjects.
+    /// Use this when performing multiple lookups against the same subject list.
+    static func colorMap(from subjects: [StudySubject]) -> [String: Color] {
+        Dictionary(subjects.map { ($0.name.lowercased(), $0.color) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    /// O(1) color lookup using a pre-built dictionary when available, O(n) fallback otherwise.
     static func color(for subjectName: String, in subjects: [StudySubject]) -> Color {
         if let match = subjects.first(where: { $0.name.caseInsensitiveCompare(subjectName) == .orderedSame }) {
             return match.color
         }
         return Color(white: 0.4)
+    }
+
+    /// O(1) color lookup using a pre-built color map.
+    static func color(for subjectName: String, using colorMap: [String: Color]) -> Color {
+        colorMap[subjectName.lowercased()] ?? Color(white: 0.4)
     }
 }
 

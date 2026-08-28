@@ -1,6 +1,6 @@
 //
 //  SupabaseService.swift
-//  Factum
+//  Pigeon
 //
 //  Supabase database CRUD for users, timelapses, and comments
 //
@@ -11,9 +11,11 @@ import SwiftData
 
 // MARK: - Codable Row Types (map 1:1 to Supabase tables)
 
-struct UserRow: Codable {
+struct UserRow: Codable, Identifiable, Sendable {
+    var id: UUID { uid }
     let uid: UUID
     var displayName: String
+    var username: String?
     var email: String
     var avatarUrl: String?
     var bio: String
@@ -23,10 +25,15 @@ struct UserRow: Codable {
     var friendUids: [String]
     var pendingFriendRequestUids: [String]
     var subjects: [[String: String]]?
-    
+    var lastSeenAt: Date?
+    var isStudying: Bool?
+    var currentSubject: String?
+    var isPrivate: Bool?
+
     enum CodingKeys: String, CodingKey {
         case uid
         case displayName = "display_name"
+        case username
         case email
         case avatarUrl = "avatar_url"
         case bio
@@ -36,10 +43,66 @@ struct UserRow: Codable {
         case friendUids = "friend_uids"
         case pendingFriendRequestUids = "pending_friend_request_uids"
         case subjects
+        case lastSeenAt = "last_seen_at"
+        case isStudying = "is_studying"
+        case currentSubject = "current_subject"
+        case isPrivate = "is_private"
     }
 }
 
-struct TimelapseRow: Codable {
+struct FriendRequestRow: Codable, Sendable {
+    let id: UUID
+    var senderUid: UUID
+    var receiverUid: UUID
+    var status: String
+    var createdAt: Date
+    
+    enum CodingKeys: String, CodingKey {
+        case id
+        case senderUid = "sender_uid"
+        case receiverUid = "receiver_uid"
+        case status
+        case createdAt = "created_at"
+    }
+}
+
+struct StudyGroupRow: Codable, Sendable {
+    let id: UUID
+    var name: String
+    var description: String
+    var creatorUid: String
+    var memberUids: [String]
+    var iconName: String
+    var createdAt: Date
+    
+    enum CodingKeys: String, CodingKey {
+        case id, name, description
+        case creatorUid = "creator_uid"
+        case memberUids = "member_uids"
+        case iconName = "icon_name"
+        case createdAt = "created_at"
+    }
+}
+
+struct GroupInviteRow: Codable, Sendable {
+    let id: UUID
+    var groupId: UUID
+    var inviterUid: String
+    var inviteeUid: String
+    var status: String
+    var createdAt: Date
+    
+    enum CodingKeys: String, CodingKey {
+        case id
+        case groupId = "group_id"
+        case inviterUid = "inviter_uid"
+        case inviteeUid = "invitee_uid"
+        case status
+        case createdAt = "created_at"
+    }
+}
+
+struct TimelapseRow: Codable, Sendable {
     let id: UUID
     var authorId: UUID
     var authorName: String
@@ -56,6 +119,7 @@ struct TimelapseRow: Codable {
     var videoDownloadUrl: String?
     var thumbnailDownloadUrl: String?
     var appLeaveCount: Int?
+    var offTaskSeconds: Int?
     var subjectSegmentsJson: String?
     
     enum CodingKeys: String, CodingKey {
@@ -75,31 +139,40 @@ struct TimelapseRow: Codable {
         case videoDownloadUrl = "video_download_url"
         case thumbnailDownloadUrl = "thumbnail_download_url"
         case appLeaveCount = "app_leave_count"
+        case offTaskSeconds = "off_task_seconds"
         case subjectSegmentsJson = "subject_segments_json"
     }
-}
-
-struct SupaCommentRow: Codable {
-    let id: UUID
-    var timelapseId: UUID
-    var authorId: String
-    var authorName: String
-    var text: String
-    var createdAt: Date
     
-    enum CodingKeys: String, CodingKey {
-        case id
-        case timelapseId = "timelapse_id"
-        case authorId = "author_id"
-        case authorName = "author_name"
-        case text
-        case createdAt = "created_at"
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(authorId, forKey: .authorId)
+        try container.encode(authorName, forKey: .authorName)
+        try container.encodeIfPresent(authorAvatarUrl, forKey: .authorAvatarUrl)
+        try container.encode(caption, forKey: .caption)
+        try container.encode(studyDescription, forKey: .studyDescription)
+        try container.encode(subject, forKey: .subject)
+        try container.encode(durationSeconds, forKey: .durationSeconds)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(isLandscape, forKey: .isLandscape)
+        try container.encode(likeCount, forKey: .likeCount)
+        try container.encode(likedByUids, forKey: .likedByUids)
+        try container.encode(commentCount, forKey: .commentCount)
+        try container.encodeIfPresent(videoDownloadUrl, forKey: .videoDownloadUrl)
+        try container.encodeIfPresent(thumbnailDownloadUrl, forKey: .thumbnailDownloadUrl)
+        // NOTE: appLeaveCount, offTaskSeconds, and subjectSegmentsJson
+        // are intentionally omitted from encoding. They require matching
+        // columns in the Supabase timelapses table. Once the columns are
+        // added, uncomment the lines below.
+        // try container.encodeIfPresent(appLeaveCount, forKey: .appLeaveCount)
+        // try container.encodeIfPresent(offTaskSeconds, forKey: .offTaskSeconds)
+        // try container.encodeIfPresent(subjectSegmentsJson, forKey: .subjectSegmentsJson)
     }
 }
 
 // MARK: - RPC Parameter Types
 
-struct AddFriendParams: Codable {
+struct AddFriendParams: Codable, Sendable {
     let currentUid: UUID
     let friendUid: String
     
@@ -109,7 +182,7 @@ struct AddFriendParams: Codable {
     }
 }
 
-struct RemoveFriendParams: Codable {
+struct RemoveFriendParams: Codable, Sendable {
     let currentUid: UUID
     let friendUid: String
     
@@ -119,7 +192,7 @@ struct RemoveFriendParams: Codable {
     }
 }
 
-struct ToggleLikeParams: Codable {
+struct ToggleLikeParams: Codable, Sendable {
     let pTimelapseId: UUID
     let pUserUid: String
     let pIsLiked: Bool
@@ -131,17 +204,9 @@ struct ToggleLikeParams: Codable {
     }
 }
 
-struct IncrementCommentCountParams: Codable {
-    let pTimelapseId: UUID
-    
-    enum CodingKeys: String, CodingKey {
-        case pTimelapseId = "p_timelapse_id"
-    }
-}
-
 // MARK: - Supabase Service
 
-final class SupabaseService {
+final class SupabaseService: Sendable {
     static let shared = SupabaseService()
     
     private init() {}
@@ -156,6 +221,7 @@ final class SupabaseService {
         let row = UserRow(
             uid: uid,
             displayName: profile.displayName,
+            username: profile.username,
             email: profile.email,
             avatarUrl: profile.avatarURL,
             bio: profile.bio,
@@ -163,7 +229,8 @@ final class SupabaseService {
             totalStudyMinutes: profile.totalStudyMinutes,
             streakDays: profile.streakDays,
             friendUids: profile.friendUIDs,
-            pendingFriendRequestUids: profile.pendingFriendRequestUIDs
+            pendingFriendRequestUids: profile.pendingFriendRequestUIDs,
+            isPrivate: profile.isPrivate
         )
         
         try await supabase.from("users").upsert(row).execute()
@@ -183,11 +250,12 @@ final class SupabaseService {
         return response
     }
     
-    /// Search users by display name prefix (case-insensitive).
+    /// Search users by display name or @username prefix (case-insensitive).
     func searchUsers(query: String, limit: Int = 20) async throws -> [UserRow] {
+        let cleaned = query.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "@"))
         let response: [UserRow] = try await supabase.from("users")
             .select()
-            .ilike("display_name", pattern: "\(query)%")
+            .or("display_name.ilike.\(cleaned)%,username.ilike.\(cleaned)%")
             .limit(limit)
             .execute()
             .value
@@ -199,7 +267,12 @@ final class SupabaseService {
     
     /// Save a timelapse to Supabase.
     func saveTimelapse(_ timelapse: StudyTimelapse) async throws {
-        guard let authorUUID = UUID(uuidString: timelapse.authorID) else { return }
+        guard let authorUUID = UUID(uuidString: timelapse.authorID) else {
+            print("[SYNC] ERROR: Invalid authorID '\(timelapse.authorID)' — cannot save timelapse \(timelapse.id)")
+            throw NSError(domain: "SupabaseService", code: -1, userInfo: [
+                NSLocalizedDescriptionKey: "Invalid authorID: \(timelapse.authorID)"
+            ])
+        }
         
         let row = TimelapseRow(
             id: timelapse.id,
@@ -218,6 +291,7 @@ final class SupabaseService {
             videoDownloadUrl: timelapse.videoDownloadURL,
             thumbnailDownloadUrl: timelapse.thumbnailDownloadURL,
             appLeaveCount: timelapse.appLeaveCount,
+            offTaskSeconds: timelapse.offTaskSeconds,
             subjectSegmentsJson: timelapse.subjectSegmentsJSON
         )
         
@@ -243,19 +317,45 @@ final class SupabaseService {
             .execute()
     }
     
-    /// Fetch timelapses for a specific user.
-    func fetchTimelapses(forUser uid: String, limit: Int = 50) async throws -> [TimelapseRow] {
+    /// Fetch timelapses for a specific user (paginated to get ALL records).
+    func fetchTimelapses(forUser uid: String, limit: Int? = nil) async throws -> [TimelapseRow] {
         guard let uuid = UUID(uuidString: uid) else { return [] }
-        
-        let response: [TimelapseRow] = try await supabase.from("timelapses")
-            .select()
-            .eq("author_id", value: uuid)
-            .order("created_at", ascending: false)
-            .limit(limit)
-            .execute()
-            .value
-        
-        return response
+
+        // If a specific limit is given, use a single fetch
+        if let limit {
+            let response: [TimelapseRow] = try await supabase.from("timelapses")
+                .select()
+                .eq("author_id", value: uuid)
+                .order("created_at", ascending: false)
+                .limit(limit)
+                .execute()
+                .value
+            return response
+        }
+
+        // Otherwise paginate to fetch ALL timelapses (Supabase default max is 1000 per request)
+        let pageSize = 1000
+        var allRows: [TimelapseRow] = []
+        var offset = 0
+
+        while true {
+            let page: [TimelapseRow] = try await supabase.from("timelapses")
+                .select()
+                .eq("author_id", value: uuid)
+                .order("created_at", ascending: false)
+                .range(from: offset, to: offset + pageSize - 1)
+                .execute()
+                .value
+
+            allRows.append(contentsOf: page)
+
+            if page.count < pageSize {
+                break // Last page — we got everything
+            }
+            offset += pageSize
+        }
+
+        return allRows
     }
     
     /// Fetch timelapses from a list of user UIDs (for social feed).
@@ -276,9 +376,32 @@ final class SupabaseService {
         
         return response
     }
-    
+
+    /// Fetch recent timelapses from public accounts (for the public feed).
+    func fetchPublicFeed(excludeUID: String, limit: Int = 50) async throws -> [TimelapseRow] {
+        // Get public user UIDs (all users are public unless is_private is set)
+        let publicUsers: [UserRow] = try await supabase.from("users")
+            .select()
+            .neq("uid", value: UUID(uuidString: excludeUID) ?? UUID())
+            .execute()
+            .value
+
+        let publicUIDs = publicUsers.map { $0.uid }
+        guard !publicUIDs.isEmpty else { return [] }
+
+        let response: [TimelapseRow] = try await supabase.from("timelapses")
+            .select()
+            .in("author_id", values: publicUIDs)
+            .order("created_at", ascending: false)
+            .limit(limit)
+            .execute()
+            .value
+
+        return response
+    }
+
     // MARK: - Friends
-    
+
     /// Add a friend UID to the current user's friend list.
     func addFriend(currentUID: String, friendUID: String) async throws {
         guard let uuid = UUID(uuidString: currentUID) else { return }
@@ -297,6 +420,220 @@ final class SupabaseService {
         ).execute()
     }
     
+    // MARK: - Usernames
+    
+    /// Check if a username is available.
+    func isUsernameAvailable(_ username: String) async throws -> Bool {
+        let result: Bool = try await supabase.rpc(
+            "is_username_available",
+            params: ["p_username": username.lowercased()]
+        ).execute().value
+        return result
+    }
+    
+    /// Claim a username atomically (returns false if taken).
+    func claimUsername(_ username: String, forUser uid: String) async throws -> Bool {
+        guard let uuid = UUID(uuidString: uid) else { return false }
+        let result: Bool = try await supabase.rpc(
+            "claim_username",
+            params: ["p_uid": uuid.uuidString, "p_username": username.lowercased()]
+        ).execute().value
+        return result
+    }
+    
+    // MARK: - Presence / Online Status
+    
+    /// Update the user's online presence (last seen timestamp + optional study status).
+    func updatePresence(uid: String, isStudying: Bool, currentSubject: String?) async {
+        guard let uuid = UUID(uuidString: uid) else { return }
+        struct PresenceUpdate: Codable {
+            let lastSeenAt: Date
+            let isStudying: Bool
+            let currentSubject: String?
+            
+            enum CodingKeys: String, CodingKey {
+                case lastSeenAt = "last_seen_at"
+                case isStudying = "is_studying"
+                case currentSubject = "current_subject"
+            }
+        }
+        let update = PresenceUpdate(
+            lastSeenAt: Date(),
+            isStudying: isStudying,
+            currentSubject: currentSubject
+        )
+        _ = try? await supabase.from("users")
+            .update(update)
+            .eq("uid", value: uuid)
+            .execute()
+    }
+    
+    /// Mark user as offline (no longer studying, update last seen).
+    func clearPresence(uid: String) async {
+        await updatePresence(uid: uid, isStudying: false, currentSubject: nil)
+    }
+    
+    /// Fetch multiple user profiles by UIDs.
+    func fetchUserProfiles(uids: [String]) async throws -> [UserRow] {
+        guard !uids.isEmpty else { return [] }
+        let uuids = uids.compactMap { UUID(uuidString: $0) }
+        let response: [UserRow] = try await supabase.from("users")
+            .select()
+            .in("uid", values: uuids)
+            .execute()
+            .value
+        return response
+    }
+    
+    // MARK: - Friend Requests
+    
+    /// Send a friend request.
+    func sendFriendRequest(from senderUID: String, to receiverUID: String) async throws {
+        guard let senderUUID = UUID(uuidString: senderUID),
+              let receiverUUID = UUID(uuidString: receiverUID) else { return }
+        let row = FriendRequestRow(
+            id: UUID(),
+            senderUid: senderUUID,
+            receiverUid: receiverUUID,
+            status: "pending",
+            createdAt: Date()
+        )
+        try await supabase.from("friend_requests").upsert(row).execute()
+    }
+    
+    /// Fetch pending friend requests received by this user.
+    func fetchPendingFriendRequests(forUser uid: String) async throws -> [FriendRequestRow] {
+        guard let uuid = UUID(uuidString: uid) else { return [] }
+        let response: [FriendRequestRow] = try await supabase.from("friend_requests")
+            .select()
+            .eq("receiver_uid", value: uuid)
+            .eq("status", value: "pending")
+            .order("created_at", ascending: false)
+            .execute()
+            .value
+        return response
+    }
+    
+    /// Fetch pending friend requests sent by this user.
+    func fetchSentFriendRequests(forUser uid: String) async throws -> [FriendRequestRow] {
+        guard let uuid = UUID(uuidString: uid) else { return [] }
+        let response: [FriendRequestRow] = try await supabase.from("friend_requests")
+            .select()
+            .eq("sender_uid", value: uuid)
+            .eq("status", value: "pending")
+            .order("created_at", ascending: false)
+            .execute()
+            .value
+        return response
+    }
+    
+    /// Accept a friend request (atomic RPC — adds to both users' friend lists).
+    func acceptFriendRequest(requestID: UUID) async throws {
+        try await supabase.rpc(
+            "accept_friend_request",
+            params: ["request_id": requestID.uuidString]
+        ).execute()
+    }
+    
+    /// Decline a friend request.
+    func declineFriendRequest(requestID: UUID) async throws {
+        try await supabase.from("friend_requests")
+            .update(["status": "declined"])
+            .eq("id", value: requestID)
+            .execute()
+    }
+    
+    // MARK: - Study Groups
+    
+    /// Create a new study group.
+    func createStudyGroup(_ group: StudyGroup) async throws {
+        let row = StudyGroupRow(
+            id: group.id,
+            name: group.name,
+            description: group.groupDescription,
+            creatorUid: group.creatorID,
+            memberUids: group.memberIDs,
+            iconName: group.iconName,
+            createdAt: group.createdAt
+        )
+        try await supabase.from("study_groups").insert(row).execute()
+    }
+    
+    /// Fetch groups the user belongs to.
+    func fetchGroups(forUser uid: String) async throws -> [StudyGroupRow] {
+        let response: [StudyGroupRow] = try await supabase.from("study_groups")
+            .select()
+            .contains("member_uids", value: [uid])
+            .execute()
+            .value
+        return response
+    }
+    
+    /// Invite a user to a group.
+    func inviteToGroup(groupID: UUID, inviterUID: String, inviteeUID: String) async throws {
+        let row = GroupInviteRow(
+            id: UUID(),
+            groupId: groupID,
+            inviterUid: inviterUID,
+            inviteeUid: inviteeUID,
+            status: "pending",
+            createdAt: Date()
+        )
+        try await supabase.from("group_invites").upsert(row).execute()
+    }
+    
+    /// Fetch pending group invites for a user.
+    func fetchGroupInvites(forUser uid: String) async throws -> [GroupInviteRow] {
+        let response: [GroupInviteRow] = try await supabase.from("group_invites")
+            .select()
+            .eq("invitee_uid", value: uid)
+            .eq("status", value: "pending")
+            .execute()
+            .value
+        return response
+    }
+    
+    /// Accept a group invite.
+    func acceptGroupInvite(inviteID: UUID, groupID: UUID, userUID: String) async throws {
+        try await supabase.rpc(
+            "join_group",
+            params: ["p_group_id": groupID.uuidString, "p_user_uid": userUID]
+        ).execute()
+        try await supabase.from("group_invites")
+            .update(["status": "accepted"])
+            .eq("id", value: inviteID)
+            .execute()
+    }
+    
+    /// Leave a group.
+    func leaveGroup(groupID: UUID, userUID: String) async throws {
+        try await supabase.rpc(
+            "leave_group",
+            params: ["p_group_id": groupID.uuidString, "p_user_uid": userUID]
+        ).execute()
+    }
+    
+    /// Delete a group (creator only).
+    func deleteGroup(id: UUID) async throws {
+        try await supabase.from("study_groups")
+            .delete()
+            .eq("id", value: id)
+            .execute()
+    }
+    
+    /// Fetch leaderboard data for group members sorted by study time.
+    func fetchGroupLeaderboard(memberUIDs: [String]) async throws -> [UserRow] {
+        guard !memberUIDs.isEmpty else { return [] }
+        let uuids = memberUIDs.compactMap { UUID(uuidString: $0) }
+        let response: [UserRow] = try await supabase.from("users")
+            .select()
+            .in("uid", values: uuids)
+            .order("total_study_minutes", ascending: false)
+            .execute()
+            .value
+        return response
+    }
+    
     // MARK: - Likes
     
     /// Toggle like on a timelapse.
@@ -306,89 +643,6 @@ final class SupabaseService {
             "toggle_like",
             params: ToggleLikeParams(pTimelapseId: uuid, pUserUid: userUID, pIsLiked: isLiked)
         ).execute()
-    }
-    
-    // MARK: - Comments
-    
-    /// Save a comment to Supabase and increment the timelapse's commentCount.
-    func saveComment(_ comment: TimelapseComment) async throws {
-        let row = SupaCommentRow(
-            id: comment.id,
-            timelapseId: comment.timelapseID,
-            authorId: comment.authorID,
-            authorName: comment.authorName,
-            text: comment.text,
-            createdAt: comment.createdAt
-        )
-        
-        try await supabase.from("comments").insert(row).execute()
-        
-        // Increment comment count on the timelapse
-        try await supabase.rpc(
-            "increment_comment_count",
-            params: IncrementCommentCountParams(pTimelapseId: comment.timelapseID)
-        ).execute()
-    }
-    
-    /// Save a pre-built comment row to Supabase (avoids @Model access off main actor).
-    func saveCommentRow(_ row: SupaCommentRow) async throws {
-        try await supabase.from("comments").insert(row).execute()
-        
-        // Increment comment count on the timelapse
-        try await supabase.rpc(
-            "increment_comment_count",
-            params: IncrementCommentCountParams(pTimelapseId: row.timelapseId)
-        ).execute()
-    }
-    
-    /// Fetch comments for a specific timelapse.
-    func fetchComments(forTimelapse timelapseID: String, limit: Int = 100) async throws -> [SupaCommentRow] {
-        guard let uuid = UUID(uuidString: timelapseID) else { return [] }
-        
-        let response: [SupaCommentRow] = try await supabase.from("comments")
-            .select()
-            .eq("timelapse_id", value: uuid)
-            .order("created_at", ascending: true)
-            .limit(limit)
-            .execute()
-            .value
-        
-        return response
-    }
-    
-    /// Sync comments for a timelapse from Supabase into SwiftData.
-    @MainActor
-    func syncComments(forTimelapse timelapseID: UUID, context: ModelContext) async {
-        do {
-            let rows = try await fetchComments(forTimelapse: timelapseID.uuidString)
-            
-            let descriptor = FetchDescriptor<TimelapseComment>(
-                predicate: #Predicate { $0.timelapseID == timelapseID }
-            )
-            let localComments = (try? context.fetch(descriptor)) ?? []
-            let localIDSet = Set(localComments.map { $0.id.uuidString })
-            
-            var insertedCount = 0
-            for row in rows {
-                guard !localIDSet.contains(row.id.uuidString) else { continue }
-                
-                let comment = TimelapseComment(
-                    timelapseID: row.timelapseId,
-                    authorID: row.authorId,
-                    authorName: row.authorName,
-                    text: row.text
-                )
-                comment.id = row.id
-                comment.createdAt = row.createdAt
-                context.insert(comment)
-                insertedCount += 1
-            }
-            if insertedCount > 0 {
-                print("[SYNC] Synced \(insertedCount) comments for timelapse \(timelapseID.uuidString.prefix(8))")
-            }
-        } catch {
-            print("[SYNC] Comment sync error for \(timelapseID.uuidString.prefix(8)): \(error)")
-        }
     }
     
     // MARK: - Study Subjects
@@ -508,7 +762,7 @@ final class SupabaseService {
                 }
             }
             
-            let rows = try await fetchTimelapses(forUser: uid, limit: 200)
+            let rows = try await fetchTimelapses(forUser: uid)
             print("[SYNC] Found \(rows.count) timelapses in Supabase")
             
             let descriptor = FetchDescriptor<StudyTimelapse>()
@@ -533,19 +787,31 @@ final class SupabaseService {
                 
                 if localIDSet.contains(idString) {
                     if let existing = localTimelapses.first(where: { $0.id == row.id }) {
-                        existing.likeCount = row.likeCount
+                        // Only sync social/engagement fields from cloud — never overwrite
+                        // core study data (duration, subject, caption, etc.) which is
+                        // authoritative from the device that recorded the session.
+                        existing.likeCount = max(existing.likeCount, row.likeCount)
                         existing.likedByUIDs = row.likedByUids
-                        existing.commentCount = row.commentCount
-                        existing.videoDownloadURL = row.videoDownloadUrl
-                        existing.thumbnailDownloadURL = row.thumbnailDownloadUrl
+                        existing.commentCount = max(existing.commentCount, row.commentCount)
+                        // Only fill in download URLs if local doesn't have them
+                        if existing.videoDownloadURL == nil {
+                            existing.videoDownloadURL = row.videoDownloadUrl
+                        }
+                        if existing.thumbnailDownloadURL == nil {
+                            existing.thumbnailDownloadURL = row.thumbnailDownloadUrl
+                        }
                         existing.authorAvatarURL = row.authorAvatarUrl
-                        // Sync app leaves and subject segments from cloud if local has defaults
+                        // Sync app leaves and subject segments from cloud only if local has defaults
                         if let cloudLeaves = row.appLeaveCount, existing.appLeaveCount == 0, cloudLeaves > 0 {
                             existing.appLeaveCount = cloudLeaves
+                        }
+                        if let cloudOffTask = row.offTaskSeconds, existing.offTaskSeconds == 0, cloudOffTask > 0 {
+                            existing.offTaskSeconds = cloudOffTask
                         }
                         if let cloudSegments = row.subjectSegmentsJson, existing.subjectSegmentsJSON == nil {
                             existing.subjectSegmentsJSON = cloudSegments
                         }
+                        existing.cloudSynced = true  // confirmed in cloud
                         // Queue thumbnail download if missing locally
                         if existing.thumbnailData == nil,
                            let thumbURL = row.thumbnailDownloadUrl,
@@ -573,6 +839,7 @@ final class SupabaseService {
                     timelapse.videoDownloadURL = row.videoDownloadUrl
                     timelapse.thumbnailDownloadURL = row.thumbnailDownloadUrl
                     timelapse.appLeaveCount = row.appLeaveCount ?? 0
+                    timelapse.offTaskSeconds = row.offTaskSeconds ?? 0
                     timelapse.subjectSegmentsJSON = row.subjectSegmentsJson
                     // Queue thumbnail download
                     if let thumbURL = row.thumbnailDownloadUrl,
@@ -580,6 +847,7 @@ final class SupabaseService {
                         thumbDownloads.append((timelapse, thumbRemoteURL))
                     }
                     
+                    timelapse.cloudSynced = true  // came from cloud, so it's synced
                     context.insert(timelapse)
                     insertedCount += 1
                     print("[SYNC] Restored timelapse: \(row.subject) - \"\(row.caption.prefix(30))\" (\(row.durationSeconds)s)")
@@ -633,6 +901,7 @@ final class SupabaseService {
                             timelapse.thumbnailDownloadURL = thumbURL
                         }
                         try await saveTimelapse(timelapse)
+                        timelapse.cloudSynced = true
                         uploadedCount += 1
                     } catch {
                         print("[SYNC] Failed to push local session \(timelapse.id.uuidString.prefix(8)): \(error)")
@@ -641,23 +910,6 @@ final class SupabaseService {
                 print("[SYNC] Pushed \(uploadedCount)/\(unsyncedLocal.count) unsynced local sessions to Supabase")
             }
             
-            // Sync comments for all timelapses that have comments (parallel, max 4 concurrent)
-            let allTimelapses = (try? context.fetch(FetchDescriptor<StudyTimelapse>())) ?? []
-            let timelapsesWithComments = allTimelapses.filter { $0.commentCount > 0 }
-            await withTaskGroup(of: Void.self) { group in
-                var running = 0
-                for tl in timelapsesWithComments {
-                    if running >= 4 {
-                        await group.next()
-                        running -= 1
-                    }
-                    let tlID = tl.id
-                    group.addTask { [weak self] in
-                        await self?.syncComments(forTimelapse: tlID, context: context)
-                    }
-                    running += 1
-                }
-            }
         } catch {
             print("[SYNC] Timelapse sync FAILED: \(error)")
         }
@@ -688,7 +940,9 @@ final class SupabaseService {
                 profile.totalStudyMinutes = max(profile.totalStudyMinutes, row.totalStudyMinutes)
                 profile.streakDays = max(profile.streakDays, row.streakDays)
                 profile.friendUIDs = row.friendUids
-                
+                profile.username = row.username
+                if let privacy = row.isPrivate { profile.isPrivate = privacy }
+
                 // If local stats were higher, push them back to Supabase
                 if profile.totalStudyMinutes > row.totalStudyMinutes || profile.streakDays > row.streakDays {
                     try? await saveUserProfile(profile)
@@ -714,6 +968,7 @@ final class SupabaseService {
                 displayName: displayName,
                 email: email,
                 firebaseUID: uid,
+                username: userRow?.username,
                 avatarURL: avatarURL,
                 bio: bio
             )
@@ -723,6 +978,7 @@ final class SupabaseService {
                 profile.streakDays = row.streakDays
                 profile.friendUIDs = row.friendUids
                 profile.joinDate = row.joinDate
+                if let privacy = row.isPrivate { profile.isPrivate = privacy }
             }
             
             context.insert(profile)

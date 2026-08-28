@@ -1,6 +1,6 @@
 //
 //  SupabaseClient.swift
-//  Factum
+//  Pigeon
 //
 //  Shared Supabase client instance
 //

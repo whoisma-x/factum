@@ -1,6 +1,6 @@
 //
 //  TutorialOverlayView.swift
-//  Factum
+//  Pigeon
 //
 //  Post-onboarding coach marks tutorial
 //
@@ -283,7 +283,7 @@ struct TutorialOverlayView: View {
                     VStack(spacing: 0) {
                         // Arrow pointing up at the stats card
                         TooltipArrow()
-                            .fill(FactumTheme.cardBackground)
+                            .fill(PigeonTheme.cardBackground)
                             .frame(width: 16, height: 10)
                             .rotationEffect(.degrees(180))
                             .offset(x: arrowCenterX - screenWidth / 2)
@@ -315,7 +315,7 @@ struct TutorialOverlayView: View {
                         
                         // Arrow pointing down at the target tab
                         TooltipArrow()
-                            .fill(FactumTheme.cardBackground)
+                            .fill(PigeonTheme.cardBackground)
                             .frame(width: 16, height: 10)
                             .offset(x: arrowCenterX - screenWidth / 2)
                     }
@@ -334,16 +334,16 @@ struct TutorialOverlayView: View {
             HStack(spacing: 10) {
                 Image(systemName: currentStep.icon)
                     .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(FactumTheme.secondaryText)
+                    .foregroundStyle(PigeonTheme.secondaryText)
                 
                 Text(currentStep.title)
-                    .font(FactumTheme.headlineFont)
-                    .foregroundStyle(FactumTheme.primaryText)
+                    .font(PigeonTheme.headlineFont)
+                    .foregroundStyle(PigeonTheme.primaryText)
             }
             
             Text(currentStep.description)
-                .font(FactumTheme.font(16, weight: .light))
-                .foregroundStyle(FactumTheme.secondaryText)
+                .font(PigeonTheme.font(16, weight: .light))
+                .foregroundStyle(PigeonTheme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
             
             HStack {
@@ -361,7 +361,7 @@ struct TutorialOverlayView: View {
                             }
                         }()
                         Circle()
-                            .fill(isActive ? FactumTheme.primaryText : FactumTheme.separator)
+                            .fill(isActive ? PigeonTheme.primaryText : PigeonTheme.separator)
                             .frame(width: 6, height: 6)
                     }
                 }
@@ -374,8 +374,8 @@ struct TutorialOverlayView: View {
                         Haptics.light()
                         dismissTutorial()
                     }
-                    .font(FactumTheme.captionFont)
-                    .foregroundStyle(FactumTheme.tertiaryText)
+                    .font(PigeonTheme.captionFont)
+                    .foregroundStyle(PigeonTheme.tertiaryText)
                     .padding(.trailing, 8)
                 }
                 
@@ -384,12 +384,12 @@ struct TutorialOverlayView: View {
                     Haptics.light()
                     advanceStep()
                 }
-                .buttonStyle(FactumButtonStyle())
+                .buttonStyle(PigeonButtonStyle())
             }
             .padding(.top, 2)
         }
         .padding(20)
-        .background(FactumTheme.cardBackground)
+        .background(PigeonTheme.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .shadow(color: .black.opacity(0.2), radius: 16, x: 0, y: 4)
     }
@@ -488,7 +488,7 @@ struct CameraTutorialOverlay: View {
                     VStack(spacing: 0) {
                         cameraCardContent
                         TooltipArrow()
-                            .fill(FactumTheme.cardBackground)
+                            .fill(PigeonTheme.cardBackground)
                             .frame(width: 16, height: 10)
                             .offset(x: arrowCenterX - screenWidth / 2)
                     }
@@ -514,16 +514,16 @@ struct CameraTutorialOverlay: View {
             HStack(spacing: 10) {
                 Image(systemName: currentStep.icon)
                     .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(FactumTheme.secondaryText)
+                    .foregroundStyle(PigeonTheme.secondaryText)
                 
                 Text(currentStep.title)
-                    .font(FactumTheme.headlineFont)
-                    .foregroundStyle(FactumTheme.primaryText)
+                    .font(PigeonTheme.headlineFont)
+                    .foregroundStyle(PigeonTheme.primaryText)
             }
             
             Text(currentStep.description)
-                .font(FactumTheme.font(16, weight: .light))
-                .foregroundStyle(FactumTheme.secondaryText)
+                .font(PigeonTheme.font(16, weight: .light))
+                .foregroundStyle(PigeonTheme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
             
             HStack {
@@ -538,7 +538,7 @@ struct CameraTutorialOverlay: View {
                             }
                         }()
                         Circle()
-                            .fill(isActive ? FactumTheme.primaryText : FactumTheme.separator)
+                            .fill(isActive ? PigeonTheme.primaryText : PigeonTheme.separator)
                             .frame(width: 6, height: 6)
                     }
                 }
@@ -549,20 +549,20 @@ struct CameraTutorialOverlay: View {
                     Haptics.light()
                     dismissCameraTutorial()
                 }
-                .font(FactumTheme.captionFont)
-                .foregroundStyle(FactumTheme.tertiaryText)
+                .font(PigeonTheme.captionFont)
+                .foregroundStyle(PigeonTheme.tertiaryText)
                 .padding(.trailing, 8)
                 
                 Button("Next") {
                     Haptics.light()
                     advanceCameraStep()
                 }
-                .buttonStyle(FactumButtonStyle())
+                .buttonStyle(PigeonButtonStyle())
             }
             .padding(.top, 2)
         }
         .padding(20)
-        .background(FactumTheme.cardBackground)
+        .background(PigeonTheme.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .shadow(color: .black.opacity(0.2), radius: 16, x: 0, y: 4)
     }
