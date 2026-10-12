@@ -73,12 +73,34 @@ final class StudySubject {
         Dictionary(subjects.map { ($0.name.lowercased(), $0.color) }, uniquingKeysWith: { first, _ in first })
     }
 
-    /// O(1) color lookup using a pre-built dictionary when available, O(n) fallback otherwise.
-    static func color(for subjectName: String, in subjects: [StudySubject]) -> Color {
-        if let match = subjects.first(where: { $0.name.caseInsensitiveCompare(subjectName) == .orderedSame }) {
+    /// A subject's colour. Matches names with surrounding spaces ignored, then
+    /// uses a colour stored on the session itself. Gray is only the last resort.
+    static func color(for subjectName: String, in subjects: [StudySubject], hexes: [String: String] = [:]) -> Color {
+        let trimmed = subjectName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let match = subjects.first(where: {
+            $0.name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(trimmed) == .orderedSame
+        }) {
             return match.color
         }
+        if let hex = hexes[trimmed.lowercased()], let stored = Color(hex: hex) {
+            return stored
+        }
         return Color(white: 0.4)
+    }
+
+    /// Colours written onto session segments, keyed by trimmed lowercase name.
+    static func hexes(in segments: [SubjectSegment]) -> [String: String] {
+        var map: [String: String] = [:]
+        for segment in segments {
+            guard let hex = segment.colorHex, Color(hex: hex) != nil else { continue }
+            let key = segment.subject.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if map[key] == nil { map[key] = hex }
+        }
+        return map
+    }
+
+    static func hexes(in timelapses: [StudyTimelapse]) -> [String: String] {
+        hexes(in: timelapses.flatMap(\.subjectSegments))
     }
 
     /// O(1) color lookup using a pre-built color map.

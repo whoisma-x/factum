@@ -421,13 +421,14 @@ func formatDuration(_ seconds: Int) -> String {
 
 func subjectBreakdown(from timelapses: [StudyTimelapse], subjects: [StudySubject]) -> [(subject: String, seconds: Int, color: Color)] {
     var dict: [String: Int] = [:]
+    let stored = StudySubject.hexes(in: timelapses)
     for t in timelapses {
         // Use per-subject segments when available; falls back to single segment
         for segment in t.subjectSegments {
             dict[segment.subject, default: 0] += segment.seconds
         }
     }
-    return dict.map { (subject: $0.key, seconds: $0.value, color: StudySubject.color(for: $0.key, in: subjects)) }
+    return dict.map { (subject: $0.key, seconds: $0.value, color: StudySubject.color(for: $0.key, in: subjects, hexes: stored)) }
         .sorted { $0.seconds > $1.seconds }
 }
 
@@ -481,13 +482,14 @@ struct PeriodDetailPopover: View {
 
 func buildBreakdown(from timelapses: [StudyTimelapse], subjects: [StudySubject]) -> [(subject: String, seconds: Int, percent: Int, color: Color)] {
     var dict: [String: Int] = [:]
+    let stored = StudySubject.hexes(in: timelapses)
     for t in timelapses {
         for segment in t.subjectSegments {
             dict[segment.subject, default: 0] += segment.seconds
         }
     }
     let totalSec = dict.values.reduce(0, +)
-    return dict.map { (subject: $0.key, seconds: $0.value, percent: totalSec > 0 ? Int(Double($0.value) / Double(totalSec) * 100) : 0, color: StudySubject.color(for: $0.key, in: subjects)) }
+    return dict.map { (subject: $0.key, seconds: $0.value, percent: totalSec > 0 ? Int(Double($0.value) / Double(totalSec) * 100) : 0, color: StudySubject.color(for: $0.key, in: subjects, hexes: stored)) }
         .sorted { $0.percent > $1.percent }
 }
 
@@ -631,6 +633,7 @@ struct WeeklyStatsView: View {
         let grouped = Dictionary(grouping: timelapses) { t in
             calendar.startOfDay(for: t.createdAt)
         }
+        let stored = StudySubject.hexes(in: timelapses)
         for (day, dayTimelapses) in grouped {
             var subjectTotals: [String: Int] = [:]
             for t in dayTimelapses {
@@ -641,7 +644,7 @@ struct WeeklyStatsView: View {
             for (subject, seconds) in subjectTotals {
                 entries.append(WeeklyChartEntry(
                     day: day, subject: subject, minutes: seconds / 60,
-                    color: StudySubject.color(for: subject, in: subjects)
+                    color: StudySubject.color(for: subject, in: subjects, hexes: stored)
                 ))
             }
         }
@@ -673,6 +676,7 @@ struct WeeklyStatsView: View {
         guard !dayTimelapses.isEmpty else { return nil }
         
         var dict: [String: Int] = [:]
+        let stored = StudySubject.hexes(in: dayTimelapses)
         for t in dayTimelapses {
             for segment in t.subjectSegments {
                 dict[segment.subject, default: 0] += segment.seconds
@@ -680,7 +684,7 @@ struct WeeklyStatsView: View {
         }
         let totalSec = dict.values.reduce(0, +)
         
-        return dict.map { (subject: $0.key, minutes: $0.value / 60, percent: totalSec > 0 ? Int(Double($0.value) / Double(totalSec) * 100) : 0, color: StudySubject.color(for: $0.key, in: subjects)) }
+        return dict.map { (subject: $0.key, minutes: $0.value / 60, percent: totalSec > 0 ? Int(Double($0.value) / Double(totalSec) * 100) : 0, color: StudySubject.color(for: $0.key, in: subjects, hexes: stored)) }
             .sorted { $0.percent > $1.percent }
     }
     
@@ -1051,6 +1055,7 @@ struct YearlyStatsView: View {
         let grouped = Dictionary(grouping: timelapses) { t in
             calendar.component(.month, from: t.createdAt)
         }
+        let stored = StudySubject.hexes(in: timelapses)
         for (month, monthTimelapses) in grouped {
             var subjectTotals: [String: Int] = [:]
             for t in monthTimelapses {
@@ -1064,7 +1069,7 @@ struct YearlyStatsView: View {
             for (subject, seconds) in subjectTotals {
                 entries.append(YearlyChartEntry(
                     month: monthDate, subject: subject, hours: Double(seconds) / 3600.0,
-                    color: StudySubject.color(for: subject, in: subjects)
+                    color: StudySubject.color(for: subject, in: subjects, hexes: stored)
                 ))
             }
         }

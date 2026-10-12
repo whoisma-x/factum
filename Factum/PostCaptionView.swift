@@ -365,9 +365,9 @@ struct PostCaptionView: View {
                 Text("Your study time will still be saved to your history.")
             }
             .fullScreenCover(isPresented: $showExportOverlay) {
-                let color = StudySubject.color(for: primarySubjectName, in: subjects)
+                let color = StudySubject.color(for: primarySubjectName, in: subjects, hexes: StudySubject.hexes(in: subjectSegments))
                 let colorResolver: (String) -> Color = { name in
-                    StudySubject.color(for: name, in: subjects)
+                    StudySubject.color(for: name, in: subjects, hexes: StudySubject.hexes(in: subjectSegments))
                 }
                 TimelapseExportView(
                     thumbnailData: thumbnailData,

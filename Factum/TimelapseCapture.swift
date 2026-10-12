@@ -438,9 +438,10 @@ final class TimelapseCaptureManager {
                 // Re-query zoom limits now that the session is running —
                 // multi-lens devices may report switch-over factors only after start.
                 self.updateZoomLimits()
-                // Start at wide-angle (Apple Camera default) — this is factor 2.0
-                // on triple camera, 1.0 on single lens.
-                self.setZoom(self.wideAngleZoomFactor)
+                // Start at the widest FOV for the current camera position.
+                let startZoom = (self.currentCameraPosition == .front && self.minZoomFactor < 1.0)
+                    ? self.minZoomFactor : self.wideAngleZoomFactor
+                self.setZoom(startZoom)
                 self.cameraReady = true
             }
         }
@@ -599,7 +600,13 @@ final class TimelapseCaptureManager {
         currentDevice = newDevice
         configureConnectionOrientation()
         updateZoomLimits()
-        setZoom(wideAngleZoomFactor)
+        // Start at the widest FOV: on multi-lens back cameras this is the
+        // wide-angle lens (wideAngleZoomFactor, typically 2.0); on front
+        // cameras or single-lens devices with sub-1.0 min, use minZoomFactor
+        // so the user gets the largest field of view immediately.
+        let startZoom = (currentCameraPosition == .front && minZoomFactor < 1.0)
+            ? minZoomFactor : wideAngleZoomFactor
+        setZoom(startZoom)
         
         print("[FLIP] Success — now on \(newPosition == .front ? "front" : "back"), device: \(newDevice.localizedName)")
     }
@@ -625,6 +632,12 @@ final class TimelapseCaptureManager {
         
         if isMultiLens && currentCameraPosition == .back, let firstSwitch = switchOverFactors.first {
             wideAngleZoomFactor = firstSwitch
+            hasUltraWide = true
+        } else if minZoomFactor < 1.0 {
+            // Front camera (or single-lens) with sub-1.0 zoom — expose the
+            // wider FOV.  wideAngleZoomFactor stays 1.0 (the "1×" button),
+            // and hasUltraWide lets the UI show a button for the minimum zoom.
+            wideAngleZoomFactor = 1.0
             hasUltraWide = true
         } else {
             wideAngleZoomFactor = 1.0

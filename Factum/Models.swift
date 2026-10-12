@@ -56,6 +56,9 @@ struct SubjectSegment: Codable, Identifiable, Sendable {
     var id = UUID()
     let subject: String
     let seconds: Int
+    /// Colour recorded with the session. Website sessions carry this so a
+    /// subject the phone doesn't have still keeps its colour instead of gray.
+    var colorHex: String? = nil
 }
 
 // MARK: - User Profile

@@ -556,7 +556,7 @@ struct TimelapseCardView: View {
                             } label: {
                                 HStack(spacing: 3) {
                                     Circle()
-                                        .fill(StudySubject.color(for: timelapse.subject, in: subjects))
+                                        .fill(StudySubject.color(for: timelapse.subject, in: subjects, hexes: StudySubject.hexes(in: [timelapse])))
                                         .frame(width: 6, height: 6)
                                     Text(timelapse.subject)
                                         .font(PigeonTheme.smallFont)
@@ -568,7 +568,7 @@ struct TimelapseCardView: View {
                         } else {
                             HStack(spacing: 3) {
                                 Circle()
-                                    .fill(StudySubject.color(for: timelapse.subject, in: subjects))
+                                    .fill(StudySubject.color(for: timelapse.subject, in: subjects, hexes: StudySubject.hexes(in: [timelapse])))
                                     .frame(width: 6, height: 6)
                                 Text(timelapse.subject)
                                     .font(PigeonTheme.smallFont)
@@ -613,7 +613,7 @@ struct TimelapseCardView: View {
                     ForEach(timelapse.subjectSegments) { segment in
                         HStack(spacing: 8) {
                             Circle()
-                                .fill(StudySubject.color(for: segment.subject, in: subjects))
+                                .fill(StudySubject.color(for: segment.subject, in: subjects, hexes: StudySubject.hexes(in: [timelapse])))
                                 .frame(width: 8, height: 8)
                             Text(segment.subject)
                                 .font(PigeonTheme.smallFont)
@@ -893,9 +893,9 @@ struct TimelapseCardView: View {
                 .presentationDetents([.medium])
         }
         .fullScreenCover(isPresented: $showStoryStyleSheet) {
-            let color = StudySubject.color(for: timelapse.subject, in: subjects)
+            let color = StudySubject.color(for: timelapse.subject, in: subjects, hexes: StudySubject.hexes(in: [timelapse]))
             let colorResolver: (String) -> Color = { name in
-                StudySubject.color(for: name, in: subjects)
+                StudySubject.color(for: name, in: subjects, hexes: StudySubject.hexes(in: [timelapse]))
             }
             StickerCanvasView(
                 durationSeconds: timelapse.durationSeconds,
@@ -1127,7 +1127,7 @@ struct TimelapseDetailView: View {
                                             Image(systemName: "book.fill")
                                                 .font(.system(size: 20))
                                                 .frame(height: 22)
-                                                .foregroundStyle(StudySubject.color(for: timelapse.subject, in: subjects))
+                                                .foregroundStyle(StudySubject.color(for: timelapse.subject, in: subjects, hexes: StudySubject.hexes(in: [timelapse])))
                                             Text(timelapse.subject)
                                                 .font(PigeonTheme.font(16, weight: .bold))
                                                 .frame(height: 20)
@@ -1204,7 +1204,7 @@ struct TimelapseDetailView: View {
                             ForEach(timelapse.subjectSegments) { segment in
                                 HStack(spacing: 8) {
                                     Circle()
-                                        .fill(StudySubject.color(for: segment.subject, in: subjects))
+                                        .fill(StudySubject.color(for: segment.subject, in: subjects, hexes: StudySubject.hexes(in: [timelapse])))
                                         .frame(width: 8, height: 8)
                                     Text(segment.subject)
                                         .font(PigeonTheme.captionFont)
@@ -1348,9 +1348,9 @@ struct TimelapseDetailView: View {
                     .presentationDetents([.medium])
             }
             .fullScreenCover(isPresented: $showStoryStyleSheet) {
-                let color = StudySubject.color(for: timelapse.subject, in: subjects)
+                let color = StudySubject.color(for: timelapse.subject, in: subjects, hexes: StudySubject.hexes(in: [timelapse]))
                 let colorResolver: (String) -> Color = { name in
-                    StudySubject.color(for: name, in: subjects)
+                    StudySubject.color(for: name, in: subjects, hexes: StudySubject.hexes(in: [timelapse]))
                 }
                 StickerCanvasView(
                     durationSeconds: timelapse.durationSeconds,

@@ -45,6 +45,7 @@ struct TimelapseCameraView: View {
     
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(WallpaperManager.self) private var wallpaperManager
     @Query(sort: \StudySubject.sortOrder) private var subjects: [StudySubject]
     @State private var captureManager = TimelapseCaptureManager()
     @State private var showPostCaption = false
@@ -411,10 +412,20 @@ struct TimelapseCameraView: View {
             .gesture(magnifyGesture)
     }
     
+    /// Whether the timer view should show the user's wallpaper behind it.
+    private var showsTimerWallpaper: Bool {
+        phase == .timerRunning && wallpaperManager.hasCustomHomeWallpaper
+    }
+    
     @ViewBuilder
     private var cameraZStack: some View {
         ZStack {
             PigeonTheme.background.ignoresSafeArea()
+            
+            // Show wallpaper background during timer-only mode
+            if showsTimerWallpaper {
+                WallpaperBackgroundView(config: wallpaperManager.homeConfig)
+            }
             
             if showsCameraPreview {
                 CameraPreviewView(session: captureManager.captureSession,
@@ -1896,98 +1907,326 @@ struct TimelapseCameraView: View {
     
     private var timerRunningOverlay: some View {
         ZStack {
-            VStack {
-                // Top bar
-                HStack {
-                    if !lockMode {
-                        Button {
-                            Haptics.light()
-                            cancelDimTimer()
-                            restoreBrightness()
-                            captureManager.pauseRecording()
-                        } label: {
-                            Image(systemName: "pause.fill")
-                                .font(.system(size: 18, weight: .semibold))
-                                .foregroundStyle(PigeonTheme.primaryText)
-                                .padding(12)
-                                .background(PigeonTheme.elevated)
-                                .clipShape(Circle())
+            GlassEffectContainer(spacing: 12) {
+                VStack {
+                    // Top bar
+                    HStack {
+                        if !lockMode {
+                            Button {
+                                Haptics.light()
+                                cancelDimTimer()
+                                restoreBrightness()
+                                captureManager.pauseRecording()
+                            } label: {
+                                Image(systemName: "pause.fill")
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .foregroundStyle(showsTimerWallpaper ? .white : PigeonTheme.primaryText)
+                                    .padding(12)
+                                    .glassEffect(in: .circle)
+                            }
                         }
+                        
+                        Spacer()
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 16)
+                    
+                    Spacer()
+                    
+                    // Photo thumbnail
+                    if let photo = captureManager.capturedPhoto {
+                        Image(uiImage: photo)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 80, height: 80)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .strokeBorder(PigeonTheme.accent, lineWidth: 2)
+                            )
+                            .shadow(color: .black.opacity(0.2), radius: 8, y: 4)
+                            .padding(.bottom, 12)
+                    }
+                    
+                    // Timer display
+                    timerGlassDisplay
+                    
+                    // Subject pill — always visible, tappable only when unlocked
+                    timerSubjectPill
+                        .padding(.top, 8)
+                        .allowsHitTesting(!lockMode)
+                        .opacity(lockMode ? 0.6 : 1.0)
+                    
+                    // Lock toggle or hold-to-unlock
+                    if lockMode {
+                        holdToUnlockControl(isCamera: showsTimerWallpaper)
+                            .padding(.top, 12)
+                    } else {
+                        timerLockButton
+                            .padding(.top, 12)
+                    }
+                    
+                    // App leave counter
+                    if appLeaveCount > 0 {
+                        timerLeaveCounter
+                            .padding(.top, 8)
                     }
                     
                     Spacer()
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, 16)
-                
-                Spacer()
-                
-                // Photo thumbnail
-                if let photo = captureManager.capturedPhoto {
-                    Image(uiImage: photo)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(width: 80, height: 80)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .strokeBorder(PigeonTheme.accent, lineWidth: 2)
-                        )
-                        .shadow(color: .black.opacity(0.2), radius: 8, y: 4)
-                        .padding(.bottom, 12)
-                }
-                
-                // Timer display — themed for non-camera background
-                photoTimerDisplay
-                
-                // Subject pill — always visible, tappable only when unlocked
-                subjectPill(isCamera: false)
-                    .padding(.top, 8)
-                    .allowsHitTesting(!lockMode)
-                    .opacity(lockMode ? 0.6 : 1.0)
-                
-                // Lock toggle or hold-to-unlock
-                if lockMode {
-                    holdToUnlockControl(isCamera: false)
-                        .padding(.top, 12)
-                } else {
-                    lockButton
-                        .padding(.top, 12)
-                }
-                
-                // App leave counter
-                if appLeaveCount > 0 {
-                    leaveCounter(isCamera: false)
-                        .padding(.top, 8)
-                }
-                
-                Spacer()
-                
-                // End Session button — only when unlocked
-                if !lockMode {
-                    Button {
-                        Haptics.medium()
-                        cancelDimTimer()
-                        restoreBrightness()
-                        captureManager.stopRecording()
-                        handleTimerEnd()
-                    } label: {
-                        Text("End Session")
-                            .font(PigeonTheme.font(18, weight: .semibold))
-                            .foregroundStyle(PigeonTheme.accentText)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 18)
-                            .background(PigeonTheme.accent)
-                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                    
+                    // End Session button — only when unlocked
+                    if !lockMode {
+                        Button {
+                            Haptics.medium()
+                            cancelDimTimer()
+                            restoreBrightness()
+                            captureManager.stopRecording()
+                            handleTimerEnd()
+                        } label: {
+                            Text("End Session")
+                                .font(PigeonTheme.font(18, weight: .semibold))
+                                .foregroundStyle(showsTimerWallpaper ? .white : PigeonTheme.primaryText)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 18)
+                                .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 14))
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 50)
                     }
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 50)
                 }
             }
             
             // Paused overlay
             if captureManager.isPaused {
-                pausedOverlay(isCamera: false)
+                pausedOverlay(isCamera: showsTimerWallpaper)
+            }
+        }
+    }
+    
+    // MARK: - Timer Glass Elements
+    
+    /// Subject pill for timer mode — uses Liquid Glass.
+    /// Hides the dropdown chevron when locked so it's clear it's not tappable.
+    private var timerSubjectPill: some View {
+        Button {
+            showSubjectPicker = true
+        } label: {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(StudySubject.color(for: captureManager.currentSubject, in: subjects))
+                    .frame(width: 8, height: 8)
+                Text(captureManager.currentSubject)
+                    .font(PigeonTheme.font(13, weight: .semibold))
+                if !lockMode {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 10, weight: .bold))
+                }
+            }
+            .foregroundStyle(showsTimerWallpaper ? .white : PigeonTheme.primaryText)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .glassEffect()
+        }
+        .sheet(isPresented: $showSubjectPicker) {
+            subjectSwitchSheet
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(PigeonTheme.background)
+        }
+    }
+    
+    /// Lock button for timer mode — uses Liquid Glass.
+    private var timerLockButton: some View {
+        Button {
+            Haptics.medium()
+            withAnimation(.easeInOut(duration: 0.25)) {
+                lockMode = true
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "lock.open")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("Lock")
+                    .font(.system(size: 12, weight: .semibold, design: .serif))
+            }
+            .foregroundStyle(showsTimerWallpaper ? .white.opacity(0.8) : PigeonTheme.secondaryText)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .glassEffect()
+        }
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.5)
+                .onEnded { _ in
+                    showLockTooltip = true
+                }
+        )
+    }
+    
+    /// Leave counter for timer mode — uses Liquid Glass.
+    private var timerLeaveCounter: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "iphone.and.arrow.forward")
+                .font(.system(size: 10))
+            Text("Left \(appLeaveCount)×")
+                .font(.system(size: 11, weight: .medium, design: .serif))
+            if totalOffTaskSeconds > 0 {
+                Text("·")
+                    .font(.system(size: 11, weight: .medium))
+                Text(formatOffTaskTime(totalOffTaskSeconds))
+                    .font(.system(size: 11, weight: .medium, design: .serif))
+            }
+        }
+        .foregroundStyle(showsTimerWallpaper ? .white.opacity(0.6) : PigeonTheme.tertiaryText)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .glassEffect()
+    }
+    
+    // MARK: - Timer Glass Display
+    
+    /// Timer display wrapped in glass — shows the time, progress, and mode info.
+    @ViewBuilder
+    private var timerGlassDisplay: some View {
+        let textColor: Color = showsTimerWallpaper ? .white : PigeonTheme.primaryText
+        let secondaryColor: Color = showsTimerWallpaper ? .white.opacity(0.5) : PigeonTheme.tertiaryText
+        let subtleColor: Color = showsTimerWallpaper ? .white.opacity(0.35) : PigeonTheme.secondaryText
+        let trackColor: Color = showsTimerWallpaper ? .white.opacity(0.15) : PigeonTheme.separator
+        let accentColor: Color = showsTimerWallpaper ? .white.opacity(0.7) : PigeonTheme.accent
+        
+        VStack(spacing: 12) {
+            switch captureManager.timerMode {
+            case .continuous:
+                VStack(spacing: 8) {
+                    // Timer with glass breathing ring around it
+                    ZStack {
+                        GlassBreathingRing()
+                            .frame(width: 260, height: 260)
+                            .allowsHitTesting(false)
+                        
+                        Text(formatTime(captureManager.elapsedSeconds))
+                            .font(.system(size: 52, weight: .ultraLight, design: .serif))
+                            .foregroundStyle(textColor)
+                            .tracking(2)
+                    }
+                    
+                    Text("STUDYING")
+                        .font(.system(size: 10, weight: .regular, design: .serif))
+                        .tracking(3)
+                        .foregroundStyle(secondaryColor)
+                }
+                
+            case .pomodoro:
+                VStack(spacing: 8) {
+                    Text(captureManager.pomodoroPhase.rawValue.uppercased())
+                        .font(.system(size: 10, weight: .regular, design: .serif))
+                        .tracking(3)
+                        .foregroundStyle(captureManager.isOnBreak ? .green : secondaryColor)
+                    
+                    // Countdown with glass progress ring
+                    ZStack {
+                        GlassTimerRing(
+                            progress: pomodoroPhaseProgress,
+                            tint: captureManager.isOnBreak ? .green : nil
+                        )
+                        .frame(width: 260, height: 260)
+                        .allowsHitTesting(false)
+                        
+                        VStack(spacing: 4) {
+                            Text(formatTime(captureManager.pomodoroPhaseSecondsRemaining))
+                                .font(.system(size: 44, weight: .ultraLight, design: .serif))
+                                .foregroundStyle(captureManager.isOnBreak ? .green : textColor)
+                                .tracking(2)
+                            
+                            Text(
+                                captureManager.pomodoroMaxCycles > 0
+                                    ? "\(captureManager.pomodoroCompletedCycles)/\(captureManager.pomodoroMaxCycles)"
+                                    : "\(captureManager.pomodoroCompletedCycles) cycles"
+                            )
+                            .font(.system(size: 10, weight: .regular, design: .serif))
+                            .tracking(1)
+                            .foregroundStyle(secondaryColor)
+                        }
+                    }
+                    
+                    Text(formatTime(captureManager.elapsedSeconds))
+                        .font(.system(size: 14, weight: .light, design: .serif))
+                        .foregroundStyle(subtleColor)
+                        .tracking(1)
+                    
+                    if captureManager.isOnBreak {
+                        Text("BREAK")
+                            .font(.system(size: 10, weight: .regular, design: .serif))
+                            .tracking(2)
+                            .foregroundStyle(.green.opacity(0.8))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 4)
+                            .glassEffect(.regular.tint(.green))
+                    }
+                }
+                
+            case .setTime:
+                VStack(spacing: 8) {
+                    // Countdown with glass progress ring
+                    ZStack {
+                        GlassTimerRing(
+                            progress: setTimeProgress,
+                            tint: captureManager.countdownSecondsRemaining < 60 ? .orange : nil
+                        )
+                        .frame(width: 260, height: 260)
+                        .allowsHitTesting(false)
+                        
+                        VStack(spacing: 4) {
+                            Text(formatTime(captureManager.countdownSecondsRemaining))
+                                .font(.system(size: 44, weight: .ultraLight, design: .serif))
+                                .foregroundStyle(captureManager.countdownSecondsRemaining < 60 ? .orange : textColor)
+                                .tracking(2)
+                            
+                            Text("REMAINING")
+                                .font(.system(size: 10, weight: .regular, design: .serif))
+                                .tracking(3)
+                                .foregroundStyle(secondaryColor)
+                        }
+                    }
+                    
+                    Text(formatTime(captureManager.elapsedSeconds))
+                        .font(.system(size: 14, weight: .light, design: .serif))
+                        .foregroundStyle(subtleColor)
+                        .tracking(1)
+                }
+                
+            case .carrierPigeon:
+                if let flight = captureManager.selectedFlight {
+                    VStack(spacing: 8) {
+                        Text(flight.origin.name.uppercased())
+                            .font(.system(size: 10, weight: .regular, design: .serif))
+                            .tracking(3)
+                            .foregroundStyle(secondaryColor)
+                        
+                        Text("est ~\(formatTime(max(0, captureManager.countdownSecondsRemaining)))")
+                            .font(.system(size: 48, weight: .ultraLight, design: .serif))
+                            .foregroundStyle(captureManager.countdownSecondsRemaining < 60 ? .orange : textColor)
+                            .tracking(2)
+                        
+                        PigeonFlightMapView(
+                            flight: flight,
+                            progress: captureManager.pigeonProgress,
+                            style: showsTimerWallpaper ? .camera : .themed
+                        )
+                        .frame(width: 300)
+                        .padding(12)
+                        .glassEffect(in: .rect(cornerRadius: 16))
+                        
+                        Text(flight.destination.name.uppercased())
+                            .font(.system(size: 10, weight: .regular, design: .serif))
+                            .tracking(3)
+                            .foregroundStyle(secondaryColor)
+                        
+                        Text(formatTime(captureManager.elapsedSeconds))
+                            .font(.system(size: 14, weight: .light, design: .serif))
+                            .foregroundStyle(subtleColor)
+                            .tracking(1)
+                    }
+                }
             }
         }
     }
@@ -2405,44 +2644,40 @@ struct TimelapseCameraView: View {
     // MARK: - Hold to Unlock Control
     
     private func holdToUnlockControl(isCamera: Bool) -> some View {
-        let labelColor: Color = isCamera ? .white.opacity(0.25) : PigeonTheme.tertiaryText
-        let trackColor: Color = isCamera ? .white.opacity(0.08) : PigeonTheme.separator
-        let progressColor: Color = isCamera ? .white.opacity(0.7) : PigeonTheme.primaryText
-        let iconColor: Color = isCamera ? .white.opacity(0.35) : PigeonTheme.tertiaryText
+        let fg: Color = isCamera ? .white : PigeonTheme.primaryText
+        let fgSecondary: Color = isCamera ? .white.opacity(0.6) : PigeonTheme.secondaryText
         let holdDuration = unlockHoldDuration
         
         return ZStack {
             // Normal hold-to-unlock UI
             if !showUnlockAnim {
                 VStack(spacing: 20) {
-                    // Lock icon — large, centered
-                    Image(systemName: unlockProgress >= 1.0 ? "lock.open" : "lock.fill")
-                        .font(.system(size: 28, weight: .light))
-                        .foregroundStyle(unlockProgress >= 1.0 ? progressColor : iconColor)
-                        .contentTransition(.symbolEffect(.replace))
+                    // Lock icon with progress ring
+                    ZStack {
+                        Image(systemName: unlockProgress >= 1.0 ? "lock.open" : "lock.fill")
+                            .font(.system(size: 28, weight: .light))
+                            .foregroundStyle(unlockProgress >= 1.0 ? fg : fgSecondary)
+                            .contentTransition(.symbolEffect(.replace))
+                        
+                        // Progress ring
+                        Circle()
+                            .trim(from: 0, to: unlockProgress)
+                            .stroke(fg, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                            .frame(width: 72, height: 72)
+                            .rotationEffect(.degrees(-90))
+                    }
                     
-                    // "LOCKED" label — tall serif
+                    // "LOCKED" label
                     Text("LOCKED")
                         .font(.system(size: 11, weight: .regular, design: .serif))
                         .tracking(4)
-                        .foregroundStyle(labelColor)
-                    
-                    // Progress bar — horizontal, thin, elegant
-                    ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 1.5)
-                            .fill(trackColor)
-                            .frame(width: 120, height: 3)
-                        
-                        RoundedRectangle(cornerRadius: 1.5)
-                            .fill(progressColor)
-                            .frame(width: 120 * unlockProgress, height: 3)
-                    }
+                        .foregroundStyle(fgSecondary)
                     
                     // Instruction
-                    Text(unlockProgress > 0 ? "" : "hold to unlock")
+                    Text(unlockProgress > 0 ? "keep holding..." : "hold to unlock")
                         .font(.system(size: 10, weight: .light, design: .serif))
                         .tracking(1)
-                        .foregroundStyle(labelColor)
+                        .foregroundStyle(fgSecondary)
                         .frame(height: 14)
                 }
                 .transition(.opacity)
@@ -2455,8 +2690,8 @@ struct TimelapseCameraView: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .frame(height: 140)
-        .padding(.vertical, 24)
+        .frame(height: 160)
+        .padding(.vertical, 20)
         .contentShape(Rectangle())
         .gesture(
             DragGesture(minimumDistance: 0)
@@ -2467,7 +2702,6 @@ struct TimelapseCameraView: View {
                         withAnimation(.linear(duration: holdDuration)) {
                             unlockProgress = 1.0
                         }
-                        // Haptic ticks every 0.4s while holding
                         unlockTickTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { _ in
                             Haptics.selection()
                         }
@@ -2478,13 +2712,11 @@ struct TimelapseCameraView: View {
                     unlockTickTimer = nil
                     if let start = holdStartDate, Date().timeIntervalSince(start) >= holdDuration {
                         Haptics.success()
-                        // Pick random animation and play it
                         unlockAnimStyle = UnlockAnimStyle.allCases.randomElement() ?? .pigeonFly
                         withAnimation(.easeInOut(duration: 0.3)) {
                             showUnlockAnim = true
                         }
                         unlockProgress = 0
-                        // After animation plays, actually unlock
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                             withAnimation(.easeInOut(duration: 0.25)) {
                                 lockMode = false
@@ -2801,6 +3033,83 @@ struct BreathingRing: View {
             withAnimation(.linear(duration: 4).repeatForever(autoreverses: false)) {
                 phase = 1
             }
+        }
+    }
+}
+
+// MARK: - Glass Breathing Ring (Liquid Glass version)
+
+/// A breathing ring that uses Liquid Glass segments rotating around a circle.
+struct GlassBreathingRing: View {
+    @State private var rotation: CGFloat = 0
+    
+    var body: some View {
+        ZStack {
+            // Glass track ring
+            Circle()
+                .stroke(.white.opacity(0.08), lineWidth: 8)
+            
+            // Primary glass arc — rotates continuously
+            GlassArc(startAngle: .degrees(0), endAngle: .degrees(90))
+                .stroke(.clear, lineWidth: 8)
+                .overlay {
+                    GlassArc(startAngle: .degrees(0), endAngle: .degrees(90))
+                        .stroke(.white.opacity(0.3), style: StrokeStyle(lineWidth: 8, lineCap: .round))
+                }
+                .rotationEffect(.degrees(rotation * 360))
+            
+            // Secondary glass arc — counter-rotates
+            GlassArc(startAngle: .degrees(0), endAngle: .degrees(55))
+                .stroke(.white.opacity(0.15), style: StrokeStyle(lineWidth: 6, lineCap: .round))
+                .rotationEffect(.degrees(-rotation * 360 + 180))
+        }
+        .onAppear {
+            withAnimation(.linear(duration: 4).repeatForever(autoreverses: false)) {
+                rotation = 1
+            }
+        }
+    }
+}
+
+/// A shape representing a partial arc of a circle, used for glass ring segments.
+struct GlassArc: Shape {
+    let startAngle: Angle
+    let endAngle: Angle
+    
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.addArc(
+            center: CGPoint(x: rect.midX, y: rect.midY),
+            radius: min(rect.width, rect.height) / 2,
+            startAngle: startAngle - .degrees(90),
+            endAngle: endAngle - .degrees(90),
+            clockwise: false
+        )
+        return path
+    }
+}
+
+// MARK: - Glass Timer Ring (Liquid Glass progress ring)
+
+/// A circular progress ring with a glass track and filled progress arc.
+struct GlassTimerRing: View {
+    let progress: Double
+    var tint: Color? = nil
+    
+    var body: some View {
+        let fillColor = tint ?? .white.opacity(0.5)
+        
+        ZStack {
+            // Glass track ring
+            Circle()
+                .stroke(.white.opacity(0.08), lineWidth: 8)
+            
+            // Progress arc
+            Circle()
+                .trim(from: 0, to: CGFloat(min(max(progress, 0), 1)))
+                .stroke(fillColor, style: StrokeStyle(lineWidth: 8, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .animation(.linear(duration: 1), value: progress)
         }
     }
 }
