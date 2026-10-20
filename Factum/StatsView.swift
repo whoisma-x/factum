@@ -428,7 +428,7 @@ func subjectBreakdown(from timelapses: [StudyTimelapse], subjects: [StudySubject
             dict[segment.subject, default: 0] += segment.seconds
         }
     }
-    return dict.map { (subject: $0.key, seconds: $0.value, color: StudySubject.color(for: $0.key, in: subjects, hexes: stored)) }
+    return dict.compactMap { $0.value > 0 ? (subject: $0.key, seconds: $0.value, color: StudySubject.color(for: $0.key, in: subjects, hexes: stored)) : nil }
         .sorted { $0.seconds > $1.seconds }
 }
 

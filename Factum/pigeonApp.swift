@@ -51,10 +51,37 @@ struct PigeonApp: App {
             StudyTimelapse.self,
             StudyGroup.self,
             StudySubject.self,
+            FantasyLeague.self,
+            FantasyTeam.self,
+            RosterSlot.self,
+            WeeklyMatchup.self,
+            TradeProposal.self,
+            DraftPick.self,
+            Punishment.self,
+            LeagueInvite.self,
+            ManagerRating.self,
         ])
         
         let storeURL = URL.applicationSupportDirectory
             .appending(path: "default.store")
+        
+        // Schema version bump: when adding new @Model types (fantasy league),
+        // SwiftData may fail lightweight migration. Bump this number whenever
+        // the schema changes significantly. On mismatch, the store is backed
+        // up and deleted so SwiftData creates a fresh one — all data re-syncs
+        // from Supabase on launch.
+        let currentSchemaVersion = 3  // v1 = original, v2 = fantasy league models, v3 = slot multipliers
+        let lastSchemaVersion = defaults.integer(forKey: "pigeonSchemaVersion")
+        let storeExists = FileManager.default.fileExists(atPath: storeURL.path)
+        if storeExists && lastSchemaVersion < currentSchemaVersion {
+            print("[PIGEON] Schema version changed (\(lastSchemaVersion) → \(currentSchemaVersion)), deleting store for clean migration")
+            Self.backupStoreIfNeeded(at: storeURL)
+            let fm = FileManager.default
+            for suffix in ["", "-wal", "-shm"] {
+                try? fm.removeItem(at: storeURL.deletingLastPathComponent().appending(path: "default.store\(suffix)"))
+            }
+        }
+        defaults.set(currentSchemaVersion, forKey: "pigeonSchemaVersion")
         
         // SAFETY: Always back up the database before any migration attempt.
         // The backup lives next to the store so data is never permanently lost.
@@ -202,6 +229,17 @@ struct PigeonApp: App {
         // (no production data exists in this table).
         sqlite3_exec(db, "DROP TABLE IF EXISTS ZSTUDYGROUP", nil, nil, nil)
         
+        // Fantasy League tables — drop and recreate if schema changes
+        // (no production data loss risk since these are new tables).
+        let leagueTables = [
+            "ZFANTASYLEAGUE", "ZFANTASYTEAM", "ZROSTERSLOT",
+            "ZWEEKLYMATCHUP", "ZTRADEPROPOSAL", "ZDRAFTPICK",
+            "ZPUNISHMENT", "ZLEAGUEINVITE", "ZMANAGERRATING"
+        ]
+        for table in leagueTables {
+            sqlite3_exec(db, "DROP TABLE IF EXISTS \(table)", nil, nil, nil)
+        }
+        
         print("[PIGEON] Schema patch applied (\(patches.count) columns checked)")
     }
     
@@ -296,6 +334,15 @@ struct PigeonApp: App {
                 try context.delete(model: StudyTimelapse.self)
                 try context.delete(model: StudyGroup.self)
                 try context.delete(model: StudySubject.self)
+                try context.delete(model: FantasyLeague.self)
+                try context.delete(model: FantasyTeam.self)
+                try context.delete(model: RosterSlot.self)
+                try context.delete(model: WeeklyMatchup.self)
+                try context.delete(model: TradeProposal.self)
+                try context.delete(model: DraftPick.self)
+                try context.delete(model: Punishment.self)
+                try context.delete(model: LeagueInvite.self)
+                try context.delete(model: ManagerRating.self)
                 try context.save()
                 print("[RESET] Local data cleared (cloud backup preserved)")
             } catch {

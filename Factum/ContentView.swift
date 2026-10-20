@@ -35,7 +35,7 @@ struct ContentView: View {
     @State private var contentAppeared = false
     
     /// Navigable tab tags in order (excludes the center record button).
-    private let navigableTabs = [0, 1, 3, 4]
+    private let navigableTabs = [0, 1, 3]
     
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -43,11 +43,10 @@ struct ContentView: View {
                 // Content area — swipeable between tabs
                 Group {
                     switch selectedTab {
-                    case 0: FeedView()
+                    case 0: FantasyHomeView()
                     case 1: FriendsView()
-                    case 3: GroupsView()
-                    case 4: ProfileView()
-                    default: FeedView()
+                    case 3: ProfileView()
+                    default: FantasyHomeView()
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -239,11 +238,10 @@ struct ContentView: View {
     }
 
     private let tabs: [(icon: TabIcon, label: String, tag: Int)] = [
-        (.system("house"), "Home", 0),
+        (.system("trophy"), "Home", 0),
         (.system("person.2"), "Friends", 1),
         (.system("video"), "Record", 2),
-        (.system("rectangle.3.group.bubble"), "Groups", 3),
-        (.system("person.crop.circle"), "You", 4),
+        (.system("person.crop.circle"), "You", 3),
     ]
 
     @ViewBuilder
@@ -265,13 +263,11 @@ struct ContentView: View {
     }
 
     /// Returns the filled variant of an SF Symbol name when selected.
-    /// House stays outline-only for a clean line-art look.
     private func selectedIconName(_ name: String) -> String {
         switch name {
-        case "house": return "house"
+        case "trophy": return "trophy.fill"
         case "person.2": return "person.2.fill"
         case "video": return "video.fill"
-        case "rectangle.3.group.bubble": return "rectangle.3.group.bubble.fill"
         case "person.crop.circle": return "person.crop.circle.fill"
         default: return name
         }
@@ -295,7 +291,7 @@ struct ContentView: View {
                                 .padding(.vertical, 14)
                         }
                         .frame(maxWidth: .infinity)
-                    } else if tab.tag == 4 {
+                    } else if tab.tag == 3 {
                         // Profile tab — always shows user's avatar
                         Button {
                             Haptics.light()
@@ -529,6 +525,9 @@ struct ContentView: View {
         
         // Backfill stale author info on old sessions so name/avatar stays current
         backfillAuthorInfo(uid: uid)
+        
+        // Sync fantasy league data (invites, teams, matchups)
+        await syncLeagueData(uid: uid)
         
         try? modelContext.save()
     }
@@ -835,6 +834,23 @@ struct ContentView: View {
             print("[SYNC] Backfilled author info on \(updated) sessions")
         }
     }
+    
+    /// Sync fantasy league data — leagues, invites, and teams for the current user.
+    @MainActor
+    private func syncLeagueData(uid: String) async {
+        do {
+            let leagues = try await SupabaseService.shared.fetchFantasyLeagues(forUser: uid)
+            print("[SYNC] Fetched \(leagues.count) fantasy leagues for user")
+            
+            let invites = try await SupabaseService.shared.fetchFantasyLeagueInvites(forUser: uid)
+            let pendingInvites = invites.filter { $0.status == "pending" }
+            if !pendingInvites.isEmpty {
+                print("[SYNC] \(pendingInvites.count) pending league invites")
+            }
+        } catch {
+            print("[SYNC] League sync failed: \(error)")
+        }
+    }
 }
 
 #Preview {
@@ -843,7 +859,6 @@ struct ContentView: View {
         .modelContainer(for: [
             UserProfile.self,
             StudyTimelapse.self,
-            StudyGroup.self,
             StudySubject.self
         ], inMemory: true)
 }

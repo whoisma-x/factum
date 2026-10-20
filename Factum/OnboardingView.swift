@@ -1146,5 +1146,5 @@ struct GoogleProfileSetupView: View {
 
 #Preview {
     OnboardingView { }
-        .modelContainer(for: [UserProfile.self, StudyTimelapse.self, StudyGroup.self, StudySubject.self], inMemory: true)
+        .modelContainer(for: [UserProfile.self, StudyTimelapse.self, StudySubject.self], inMemory: true)
 }
