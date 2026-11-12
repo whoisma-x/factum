@@ -14,7 +14,7 @@ import SwiftData
 /// Explicit column list for the users table — never use select("*").
 /// Excludes `email` so anon-key reads cannot harvest addresses.
 enum UserFields {
-    static let all = "uid,display_name,username,avatar_url,bio,join_date,total_study_minutes,streak_days,friend_uids,pending_friend_request_uids,subjects,last_seen_at,is_studying,current_subject,is_private"
+    static let all = "uid,display_name,username,avatar_url,bio,join_date,total_study_minutes,streak_days,friend_uids,pending_friend_request_uids,subjects,last_seen_at,is_studying,current_subject,is_private,daily_quotas"
 }
 
 struct UserRow: Codable, Identifiable, Sendable {
@@ -34,6 +34,7 @@ struct UserRow: Codable, Identifiable, Sendable {
     var isStudying: Bool?
     var currentSubject: String?
     var isPrivate: Bool?
+    var dailyQuotas: String?
 
     enum CodingKeys: String, CodingKey {
         case uid
@@ -51,6 +52,7 @@ struct UserRow: Codable, Identifiable, Sendable {
         case isStudying = "is_studying"
         case currentSubject = "current_subject"
         case isPrivate = "is_private"
+        case dailyQuotas = "daily_quotas"
     }
 }
 
@@ -240,7 +242,8 @@ final class SupabaseService: Sendable {
             streakDays: profile.streakDays,
             friendUids: profile.friendUIDs,
             pendingFriendRequestUids: profile.pendingFriendRequestUIDs,
-            isPrivate: profile.isPrivate
+            isPrivate: profile.isPrivate,
+            dailyQuotas: profile.dailyQuotasJSON
         )
         
         try await supabase.from("users").upsert(row, returning: .minimal).execute()
@@ -503,6 +506,22 @@ final class SupabaseService: Sendable {
     /// Mark user as offline (no longer studying, update last seen).
     func clearPresence(uid: String) async {
         await updatePresence(uid: uid, isStudying: false, currentSubject: nil)
+    }
+    
+    /// Save study quotas to the daily_quotas column (lightweight single-column update).
+    func saveDailyQuotas(_ json: String?, forUser uid: String) async {
+        guard let uuid = UUID(uuidString: uid) else { return }
+        struct QuotaUpdate: Codable {
+            let dailyQuotas: String?
+            enum CodingKeys: String, CodingKey {
+                case dailyQuotas = "daily_quotas"
+            }
+        }
+        let update = QuotaUpdate(dailyQuotas: json)
+        _ = try? await supabase.from("users")
+            .update(update, returning: .minimal)
+            .eq("uid", value: uuid)
+            .execute()
     }
     
     /// Fetch multiple user profiles by UIDs.
@@ -988,6 +1007,7 @@ final class SupabaseService: Sendable {
                 profile.friendUIDs = row.friendUids
                 profile.username = row.username
                 if let privacy = row.isPrivate { profile.isPrivate = privacy }
+                if let quotas = row.dailyQuotas { profile.dailyQuotasJSON = quotas }
 
                 // If local stats were higher, push them back to Supabase
                 if profile.totalStudyMinutes > row.totalStudyMinutes || profile.streakDays > row.streakDays {
@@ -1021,6 +1041,7 @@ final class SupabaseService: Sendable {
                 profile.friendUIDs = row.friendUids
                 profile.joinDate = row.joinDate
                 if let privacy = row.isPrivate { profile.isPrivate = privacy }
+                if let quotas = row.dailyQuotas { profile.dailyQuotasJSON = quotas }
             }
             
             context.insert(profile)

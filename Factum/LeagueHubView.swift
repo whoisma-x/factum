@@ -196,8 +196,8 @@ struct LeagueHubView: View {
         let (label, color): (String, Color) = {
             switch status {
             case "pending": return ("PRE-DRAFT", PigeonTheme.tertiaryText)
-            case "in_progress": return ("DRAFTING", .orange)
-            case "completed": return ("ACTIVE", .green)
+            case "in_progress": return ("DRAFTING", Color(red: 0.85, green: 0.55, blue: 0.15))
+            case "completed": return ("ACTIVE", quotaGreen)
             default: return (status.uppercased(), PigeonTheme.tertiaryText)
             }
         }()
@@ -207,7 +207,7 @@ struct LeagueHubView: View {
             .foregroundStyle(color)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(color.opacity(0.15))
+            .background(color.opacity(0.12))
             .clipShape(RoundedRectangle(cornerRadius: 4))
     }
 

@@ -123,11 +123,7 @@ CREATE TABLE IF NOT EXISTS fantasy_manager_ratings (
     id                         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     league_id                  UUID NOT NULL REFERENCES fantasy_leagues(id) ON DELETE CASCADE,
     manager_uid                TEXT NOT NULL,
-    overall_rating             DOUBLE PRECISION NOT NULL DEFAULT 50,
-    draft_grade                DOUBLE PRECISION NOT NULL DEFAULT 50,
-    trade_grade                DOUBLE PRECISION NOT NULL DEFAULT 50,
-    roster_management_grade    DOUBLE PRECISION NOT NULL DEFAULT 50,
-    consistency_grade          DOUBLE PRECISION NOT NULL DEFAULT 50,
+    overall_rating             DOUBLE PRECISION NOT NULL DEFAULT 500,
     weekly_ratings_json        TEXT,
     updated_at                 TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE(league_id, manager_uid)
@@ -156,6 +152,13 @@ BEGIN
     ON CONFLICT DO NOTHING;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ============================================================
+-- DAILY QUOTAS (users table)
+-- ============================================================
+-- Run this to add the daily_quotas column to the existing users table.
+-- JSON format: [{"id":"uuid","subjectName":"HL Math AA","minutesPerDay":90}]
+ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_quotas TEXT;
 
 -- 2. Make a draft pick (atomic: insert pick + create roster slot + advance index)
 CREATE OR REPLACE FUNCTION make_draft_pick(

@@ -360,9 +360,9 @@ struct TimelapseCameraView: View {
     
     private func handleBecomeActive() {
         if phase == .recording || phase == .timerRunning {
-            // Only count as a leave if gone for >= 2 seconds and not a phone call
+            // Only count as a leave if gone for >= 4 seconds and not a phone call
             let awaySeconds = lastResignDate.map { Date().timeIntervalSince($0) } ?? 0
-            if !wasPhoneCall && awaySeconds >= 2 {
+            if !wasPhoneCall && awaySeconds >= 4 {
                 appLeaveCount += 1
                 totalOffTaskSeconds += Int(awaySeconds)
             }
@@ -1281,6 +1281,10 @@ struct TimelapseCameraView: View {
                     if appLeaveCount > 0 {
                         leaveCounter(isCamera: true)
                     }
+                    
+                    // Live fantasy points
+                    fantasyPointsBadge(isCamera: true)
+                        .padding(.top, 4)
                 }
                 
                 Spacer()
@@ -1971,6 +1975,10 @@ struct TimelapseCameraView: View {
                         timerLeaveCounter
                             .padding(.top, 8)
                     }
+                    
+                    // Live fantasy points
+                    timerFantasyPointsBadge
+                        .padding(.top, 8)
                     
                     Spacer()
                     
@@ -2788,6 +2796,86 @@ struct TimelapseCameraView: View {
         return secs > 0 ? "\(mins)m \(secs)s off-task" : "\(mins)m off-task"
     }
     
+    // MARK: - Live Fantasy Points (Per-Subject)
+    
+    /// Per-subject fantasy point entries for the live session.
+    /// Each subject gets proportional share of penalties based on its time fraction.
+    private var liveFantasyPointsBySubject: [(subject: String, points: Double)] {
+        let segments = captureManager.liveSubjectSegments
+        guard !segments.isEmpty else { return [] }
+        
+        let totalSeconds = segments.reduce(0) { $0 + $1.seconds }
+        guard totalSeconds > 0 else { return [] }
+        
+        return segments.map { seg in
+            let proportion = Double(seg.seconds) / Double(totalSeconds)
+            let studyMinutes = Double(seg.seconds) / 60.0
+            let offTaskMinutes = Double(totalOffTaskSeconds) / 60.0
+            let pts = (studyMinutes * 0.2)
+                - (Double(appLeaveCount) * proportion * 0.05)
+                - (offTaskMinutes * proportion / 6.0)
+            return (subject: seg.subject, points: max(0, pts))
+        }
+    }
+    
+    /// Per-subject fantasy points badges laid out centered in a row.
+    private func fantasyPointsBadge(isCamera: Bool) -> some View {
+        let entries = liveFantasyPointsBySubject
+        let fg: Color = isCamera ? .white.opacity(0.7) : PigeonTheme.secondaryText
+        let bg: Color = isCamera ? .white.opacity(0.1) : PigeonTheme.elevated
+        
+        return HStack(spacing: 6) {
+            ForEach(Array(entries.enumerated()), id: \.offset) { _, entry in
+                let formatted = entry.points < 10
+                    ? String(format: "%.2f", entry.points)
+                    : String(format: "%.1f", entry.points)
+                let subjectColor = StudySubject.color(for: entry.subject, in: subjects)
+                
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(subjectColor)
+                        .frame(width: 6, height: 6)
+                    Text("\(formatted)")
+                        .font(.system(size: 11, weight: .semibold, design: .serif))
+                        .monospacedDigit()
+                }
+                .foregroundStyle(fg)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .background(bg)
+                .clipShape(Capsule())
+            }
+        }
+    }
+    
+    /// Liquid Glass version of the per-subject fantasy points badges for timer mode.
+    private var timerFantasyPointsBadge: some View {
+        let entries = liveFantasyPointsBySubject
+        let fg: Color = showsTimerWallpaper ? .white.opacity(0.7) : PigeonTheme.secondaryText
+        
+        return HStack(spacing: 6) {
+            ForEach(Array(entries.enumerated()), id: \.offset) { _, entry in
+                let formatted = entry.points < 10
+                    ? String(format: "%.2f", entry.points)
+                    : String(format: "%.1f", entry.points)
+                let subjectColor = StudySubject.color(for: entry.subject, in: subjects)
+                
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(subjectColor)
+                        .frame(width: 6, height: 6)
+                    Text("\(formatted)")
+                        .font(.system(size: 11, weight: .semibold, design: .serif))
+                        .monospacedDigit()
+                }
+                .foregroundStyle(fg)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .glassEffect()
+            }
+        }
+    }
+    
     // MARK: - Paused Overlay
     
     private func pausedOverlay(isCamera: Bool) -> some View {
@@ -3172,6 +3260,16 @@ struct CameraPreviewView: UIViewRepresentable {
     
     func updateUIView(_ uiView: CameraPreviewUIView, context: Context) {
         context.coordinator.onDoubleTap = onDoubleTap
+        // Always reassign the session — after flipCamera() reconfigures
+        // inputs/outputs the preview layer's internal connection is invalidated
+        // even though the session reference is the same object.
+        uiView.previewLayer.session = session
+        // Re-apply portrait rotation — the connection is recreated each time
+        // the session is reconfigured (e.g. camera flip).
+        if let connection = uiView.previewLayer.connection,
+           connection.isVideoRotationAngleSupported(90) {
+            connection.videoRotationAngle = 90
+        }
     }
     
     class Coordinator: NSObject {

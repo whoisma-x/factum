@@ -383,11 +383,7 @@ final class ManagerRating {
     var id: UUID
     var leagueID: UUID
     var managerUID: String                   // Auth UID
-    var overallRating: Double                // 0-100 composite
-    var draftGrade: Double                   // 0-100
-    var tradeGrade: Double                   // 0-100
-    var rosterManagementGrade: Double        // 0-100
-    var consistencyGrade: Double             // 0-100
+    var overallRating: Double                // Chess-style rating, base 500
     var weeklyRatingsJSON: String?           // JSON-encoded historical weekly ratings
     var updatedAt: Date
 
@@ -395,39 +391,7 @@ final class ManagerRating {
         self.id = UUID()
         self.leagueID = leagueID
         self.managerUID = managerUID
-        self.overallRating = 50
-        self.draftGrade = 50
-        self.tradeGrade = 50
-        self.rosterManagementGrade = 50
-        self.consistencyGrade = 50
+        self.overallRating = 500
         self.updatedAt = Date()
-    }
-
-    /// Letter grade from numeric score (A+ through F)
-    var letterGrade: String {
-        switch overallRating {
-        case 97...100: return "A+"
-        case 93..<97: return "A"
-        case 90..<93: return "A-"
-        case 87..<90: return "B+"
-        case 83..<87: return "B"
-        case 80..<83: return "B-"
-        case 77..<80: return "C+"
-        case 73..<77: return "C"
-        case 70..<73: return "C-"
-        case 67..<70: return "D+"
-        case 63..<67: return "D"
-        case 60..<63: return "D-"
-        default: return "F"
-        }
-    }
-
-    /// Recalculate overall rating from component grades
-    func recalculate() {
-        overallRating = (draftGrade * 0.20)
-            + (tradeGrade * 0.20)
-            + (rosterManagementGrade * 0.30)
-            + (consistencyGrade * 0.30)
-        updatedAt = Date()
     }
 }

@@ -9,6 +9,8 @@ import Foundation
 import Supabase
 import GoogleSignIn
 import UIKit
+import AuthenticationServices
+import CryptoKit
 
 @MainActor @Observable
 final class AuthService {
@@ -47,6 +49,119 @@ final class AuthService {
                 self?.isLoading = false
             }
         }
+    }
+    
+    // MARK: - Sign in with Apple
+
+    @MainActor
+    func signInWithApple() async throws {
+        // Prepare a secure nonce to include in the request and later pass to Supabase
+        let rawNonce = Self.randomNonceString()
+        let hashedNonce = Self.sha256(rawNonce)
+
+        let provider = ASAuthorizationAppleIDProvider()
+        let request = provider.createRequest()
+        request.requestedScopes = [.fullName, .email]
+        request.nonce = hashedNonce
+
+        let controller = ASAuthorizationController(authorizationRequests: [request])
+        let coordinator = AppleSignInCoordinator()
+        controller.delegate = coordinator
+        controller.presentationContextProvider = coordinator
+
+        try await coordinator.perform(controller: controller)
+
+        guard let credential = coordinator.credential,
+              let idTokenData = credential.identityToken,
+              let idToken = String(data: idTokenData, encoding: .utf8) else {
+            throw AuthError.missingIDToken
+        }
+
+        // Sign in to Supabase with the Apple identity token and original (unhashed) nonce
+        try await supabase.auth.signInWithIdToken(
+            credentials: OpenIDConnectCredentials(
+                provider: .apple,
+                idToken: idToken,
+                nonce: rawNonce
+            )
+        )
+
+        // Update display name if provided by Apple on first sign-in
+        if let fullName = credential.fullName,
+           let given = fullName.givenName,
+           let family = fullName.familyName {
+            let name = "\(given) \(family)"
+            // Best-effort: store into user metadata so it syncs across devices
+            try? await supabase.auth.update(user: .init(data: ["full_name": .string(name)]))
+        }
+    }
+
+    // MARK: - Apple Sign-In helpers
+
+    private class AppleSignInCoordinator: NSObject, ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding {
+        var credential: ASAuthorizationAppleIDCredential?
+        private var continuation: CheckedContinuation<Void, Error>?
+
+        func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
+            // Try to find a valid window to present from
+            if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+               let window = scene.windows.first {
+                return window
+            }
+            return ASPresentationAnchor()
+        }
+
+        func perform(controller: ASAuthorizationController) async throws {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                self.continuation = continuation
+                controller.performRequests()
+            }
+        }
+
+        func authorizationController(controller: ASAuthorizationController, didCompleteWithAuthorization authorization: ASAuthorization) {
+            if let appleIDCredential = authorization.credential as? ASAuthorizationAppleIDCredential {
+                self.credential = appleIDCredential
+                continuation?.resume()
+            } else {
+                continuation?.resume(throwing: NSError(domain: "AppleSignIn", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid credential"]))
+            }
+            continuation = nil
+        }
+
+        func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: Error) {
+            continuation?.resume(throwing: error)
+            continuation = nil
+        }
+    }
+
+    private static func sha256(_ input: String) -> String {
+        let inputData = Data(input.utf8)
+        let hashed = SHA256.hash(data: inputData)
+        return hashed.compactMap { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func randomNonceString(length: Int = 32) -> String {
+        precondition(length > 0)
+        let charset: [Character] = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._")
+        var result = ""
+        var remainingLength = length
+
+        while remainingLength > 0 {
+            var randoms = [UInt8](repeating: 0, count: 16)
+            let errorCode = SecRandomCopyBytes(kSecRandomDefault, randoms.count, &randoms)
+            if errorCode != errSecSuccess {
+                fatalError("Unable to generate nonce. SecRandomCopyBytes failed with OSStatus \(errorCode)")
+            }
+
+            randoms.forEach { random in
+                if remainingLength == 0 { return }
+                if random < charset.count {
+                    result.append(charset[Int(random)])
+                    remainingLength -= 1
+                }
+            }
+        }
+        return result
     }
     
     // MARK: - Google Sign-In
@@ -129,3 +244,4 @@ final class AuthService {
         }
     }
 }
+

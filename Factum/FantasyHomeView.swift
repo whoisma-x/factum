@@ -8,9 +8,11 @@ import SwiftUI
 import SwiftData
 
 struct FantasyHomeView: View {
+    @Binding var showCamera: Bool
     @Environment(\.modelContext) private var modelContext
     @Query private var users: [UserProfile]
     @Query private var localTimelapses: [StudyTimelapse]
+    @Query(sort: \StudySubject.sortOrder) private var subjects: [StudySubject]
 
     @State private var leagues: [FantasyLeagueRow] = []
     @State private var teams: [UUID: FantasyTeamRow] = [:]
@@ -22,8 +24,11 @@ struct FantasyHomeView: View {
     @State private var memberNames: [String: String] = [:] // uid -> displayName
     @State private var invites: [(invite: LeagueInviteRow, leagueName: String)] = []
     @State private var isLoading = true
+    @State private var loadError = false
     @State private var appeared = false
     @State private var showCreateLeague = false
+    @State private var frozenGreeting: String? = nil
+    @AppStorage("homeStatsPeriod") private var statsPeriod: Int = 0 // 0=today, 1=week, 2=month, 3=year
 
     private let uid = AuthService.shared.currentUserID
 
@@ -47,29 +52,77 @@ struct FantasyHomeView: View {
                             Haptics.medium()
                             showCreateLeague = true
                         } label: {
-                            Image(systemName: "plus.circle.fill")
-                                .font(.system(size: 22, weight: .medium))
-                                .foregroundStyle(PigeonTheme.primaryText)
+                            HStack(spacing: 5) {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 12, weight: .semibold))
+                                Text("League")
+                                    .font(.gloucester(size: 12))
+                            }
+                            .foregroundStyle(PigeonTheme.background)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(PigeonTheme.primaryText)
+                            .clipShape(Capsule())
                         }
                     }
                     .padding(.top, 8)
                     .staggeredAppear(index: 0, appeared: appeared)
 
+                    // Study stats: hours studied + streak
+                    studyStatsRow
+                        .staggeredAppear(index: 1, appeared: appeared)
+
+                    // Study Quotas progress card
+                    if let user = currentUser, !user.studyQuotas.isEmpty {
+                        quotaCard(user: user)
+                            .staggeredAppear(index: 2, appeared: appeared)
+                    }
+
                     if isLoading {
-                        ProgressView().padding(.top, 60)
+                        VStack(spacing: 12) {
+                            ProgressView()
+                            Text("loading leagues...")
+                                .font(PigeonTheme.smallFont)
+                                .foregroundStyle(PigeonTheme.tertiaryText)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 40)
+                    } else if loadError {
+                        VStack(spacing: 12) {
+                            Image(systemName: "wifi.slash")
+                                .font(.system(size: 28))
+                                .foregroundStyle(PigeonTheme.tertiaryText)
+                            Text("Couldn't load leagues")
+                                .font(PigeonTheme.captionFont)
+                                .foregroundStyle(PigeonTheme.secondaryText)
+                            Button {
+                                Haptics.light()
+                                Task { await loadData() }
+                            } label: {
+                                Text("Retry")
+                                    .font(PigeonTheme.smallFont)
+                                    .foregroundStyle(PigeonTheme.background)
+                                    .padding(.horizontal, 20)
+                                    .padding(.vertical, 8)
+                                    .background(PigeonTheme.primaryText)
+                                    .clipShape(Capsule())
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 40)
                     } else {
                         if !invites.isEmpty {
                             inviteBanner
-                                .staggeredAppear(index: 1, appeared: appeared)
+                                .staggeredAppear(index: 3, appeared: appeared)
                         }
 
                         if leagues.isEmpty {
                             emptyState
-                                .staggeredAppear(index: 2, appeared: appeared)
+                                .staggeredAppear(index: 4, appeared: appeared)
                         } else {
                             ForEach(Array(leagues.enumerated()), id: \.element.id) { index, league in
                                 leagueSection(league)
-                                    .staggeredAppear(index: index + 2, appeared: appeared)
+                                    .staggeredAppear(index: index + 4, appeared: appeared)
                             }
                         }
                     }
@@ -89,6 +142,288 @@ struct FantasyHomeView: View {
             }
             .task { await loadData() }
         }
+    }
+
+    // MARK: - Greeting
+
+    private static let generalGreetings = [
+        "coo coo", "spread your wings", "don't be a bird brain",
+        "time to ruffle some pages", "nest up and focus", "fly through those notes",
+        "peck away at it", "feathers down, books open", "wings up",
+        "carrier pigeon mode: on", "flocking to the books", "perched and ready",
+        "hatching some knowledge", "this pigeon doesn't rest",
+        "coo'd you study any harder", "let's get cooing", "pigeon brain activated",
+        "strut your stuff", "delivering grades, one coo at a time",
+        "no crumbs, only textbooks", "this nest runs on focus",
+        "pecking order: you, then everyone else", "stay on the perch",
+        "beak deep in the books", "bread crumbs can wait", "fly above the average",
+        "pigeon post: you got this", "the flock is proud of you",
+        "one coo at a time", "let's wing this", "bob your head and get to work",
+        "homing in on those grades", "even pigeons grind",
+    ]
+
+    private static var timeOfDayGreetings: [String] {
+        let hour = Calendar.current.component(.hour, from: Date())
+        switch hour {
+        case 5..<12: return ["early bird gets the A", "rise and grind, pigeon", "morning coo, time to study", "fresh feathers, fresh start", "up with the pigeons"]
+        case 12..<17: return ["midday study flight", "peak hours, peak focus", "noon coo, lock in", "no nap, only notes"]
+        case 17..<21: return ["evening coo, still at it", "sunset study session", "golden hour for golden grades", "twilight grind"]
+        default: return ["night owl pigeon mode", "moonlit study sesh", "burning the midnight feathers", "quiet hours, loud progress"]
+        }
+    }
+
+    private var greeting: String {
+        if let frozenGreeting { return frozenGreeting }
+        let pool = Self.generalGreetings + Self.timeOfDayGreetings
+        return pool.randomElement() ?? "coo coo"
+    }
+
+    private var firstName: String {
+        let name = currentUser?.displayName ?? "Student"
+        return name.components(separatedBy: " ").first ?? name
+    }
+
+    // MARK: - Study Stats Row
+
+    private var userTimelapses: [StudyTimelapse] {
+        localTimelapses.filter { $0.authorID == uid }
+    }
+
+    private var statsPeriodLabel: String {
+        switch statsPeriod {
+        case 1: return "This Week"
+        case 2: return "This Month"
+        case 3: return "This Year"
+        default: return "Today"
+        }
+    }
+
+    private var statsPeriodMinutes: Int {
+        let cal = Calendar.current
+        switch statsPeriod {
+        case 1:
+            guard let interval = cal.dateInterval(of: .weekOfYear, for: Date()) else { return 0 }
+            return totalMinutes(since: interval.start)
+        case 2:
+            guard let interval = cal.dateInterval(of: .month, for: Date()) else { return 0 }
+            return totalMinutes(since: interval.start)
+        case 3:
+            guard let interval = cal.dateInterval(of: .year, for: Date()) else { return 0 }
+            return totalMinutes(since: interval.start)
+        default:
+            return totalMinutes(since: cal.startOfDay(for: Date()))
+        }
+    }
+
+    private func totalMinutes(since date: Date) -> Int {
+        userTimelapses
+            .filter { $0.createdAt >= date }
+            .reduce(0) { $0 + $1.durationSeconds } / 60
+    }
+
+    private var streakDays: Int {
+        guard !userTimelapses.isEmpty else { return 0 }
+        let cal = Calendar.current
+        let studyDates = Set(userTimelapses.map { cal.startOfDay(for: $0.createdAt) })
+        let today = cal.startOfDay(for: Date())
+        var checkDate = today
+        if !studyDates.contains(checkDate) {
+            guard let yesterday = cal.date(byAdding: .day, value: -1, to: checkDate) else { return 0 }
+            checkDate = yesterday
+            if !studyDates.contains(checkDate) { return 0 }
+        }
+        var streak = 0
+        while studyDates.contains(checkDate) {
+            streak += 1
+            guard let prev = cal.date(byAdding: .day, value: -1, to: checkDate) else { break }
+            checkDate = prev
+        }
+        return streak
+    }
+
+    private var studyStatsRow: some View {
+        VStack(spacing: 16) {
+            // Pigeon pun greeting
+            Text("\(greeting), \(firstName).")
+                .font(.gloucester(size: 16))
+                .foregroundStyle(PigeonTheme.secondaryText)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            // Stats: hours studied + streak — floating, no pill
+            HStack(spacing: 0) {
+                // Hours studied — long press to change period
+                VStack(spacing: 4) {
+                    Text(formatQuotaTime(statsPeriodMinutes))
+                        .font(.gloucester(size: 26))
+                        .foregroundStyle(PigeonTheme.primaryText)
+                    Text(statsPeriodLabel)
+                        .font(.gloucester(size: 10))
+                        .foregroundStyle(PigeonTheme.secondaryText)
+                        .tracking(0.5)
+                }
+                .frame(maxWidth: .infinity)
+                .onLongPressGesture(minimumDuration: 0.3) {
+                    Haptics.medium()
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        statsPeriod = (statsPeriod + 1) % 4
+                    }
+                }
+
+                // Divider
+                Rectangle()
+                    .fill(PigeonTheme.separator)
+                    .frame(width: 1, height: 28)
+
+                // Day streak
+                VStack(spacing: 4) {
+                    HStack(spacing: 4) {
+                        Text("\(streakDays)")
+                            .font(.gloucester(size: 26))
+                            .foregroundStyle(PigeonTheme.primaryText)
+                        if streakDays > 0 {
+                            Image(systemName: "flame.fill")
+                                .font(.system(size: 14))
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                    Text("Day Streak")
+                        .font(.gloucester(size: 10))
+                        .foregroundStyle(PigeonTheme.secondaryText)
+                        .tracking(0.5)
+                }
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .onAppear {
+            if frozenGreeting == nil { frozenGreeting = greeting }
+        }
+    }
+
+    // MARK: - Study Quota Card
+
+    private func quotaCard(user: UserProfile) -> some View {
+        let quotas = activeQuotas(for: user)
+        let progressItems = quotas.map { quotaProgress(for: $0) }
+
+        return VStack(alignment: .leading, spacing: 10) {
+            Text("STUDY QUOTAS")
+                .font(.gloucester(size: 11))
+                .foregroundStyle(PigeonTheme.secondaryText)
+                .tracking(1.5)
+
+            ForEach(Array(zip(quotas, progressItems)), id: \.0.id) { quota, progress in
+                let pct = progress.target > 0 ? min(Double(progress.done) / Double(progress.target), 1.0) : 0
+                let color = StudySubject.color(for: quota.subjectName, in: subjects)
+
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(color)
+                        .frame(width: 8, height: 8)
+                    Text(quota.subjectName)
+                        .font(.gloucester(size: 12))
+                        .foregroundStyle(PigeonTheme.primaryText)
+                        .lineLimit(1)
+                    Spacer()
+                    Text("\(Int(pct * 100))%")
+                        .font(.gloucester(size: 11))
+                        .foregroundStyle(pct >= 1.0 ? quotaGreen : PigeonTheme.secondaryText)
+                    Text(progress.label)
+                        .font(.gloucester(size: 11))
+                        .foregroundStyle(PigeonTheme.secondaryText)
+                }
+
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(PigeonTheme.secondaryText.opacity(0.15))
+                            .frame(height: 4)
+                        Capsule()
+                            .fill(pct >= 1.0 ? quotaGreen : color)
+                            .frame(width: geo.size.width * pct, height: 4)
+                    }
+                }
+                .frame(height: 4)
+            }
+        }
+        .padding(16)
+        .pigeonGlassSurface(cornerRadius: 16)
+    }
+
+    // MARK: - Quota Progress Helpers
+
+    private func activeQuotas(for user: UserProfile) -> [StudyQuota] {
+        let cal = Calendar.current
+        return user.studyQuotas.filter { quota in
+            if quota.frequency == .oneTime {
+                return (quota.deadline ?? Date()) >= cal.startOfDay(for: Date())
+            }
+            return true
+        }
+    }
+
+    private func quotaProgress(for quota: StudyQuota) -> (done: Int, target: Int, label: String) {
+        let cal = Calendar.current
+        switch quota.frequency {
+        case .daily:
+            let done = todaySubjectMinutes()[quota.subjectName, default: 0]
+            return (done, quota.targetMinutes, "\(formatQuotaTime(done))/\(formatQuotaTime(quota.targetMinutes))")
+        case .weekly:
+            let done = subjectMinutes(for: quota.subjectName, in: .weekOfYear)
+            return (done, quota.targetMinutes, "\(formatQuotaTime(done))/\(formatQuotaTime(quota.targetMinutes))")
+        case .monthly:
+            let done = subjectMinutes(for: quota.subjectName, in: .month)
+            return (done, quota.targetMinutes, "\(formatQuotaTime(done))/\(formatQuotaTime(quota.targetMinutes))")
+        case .yearly:
+            let done = subjectMinutes(for: quota.subjectName, in: .year)
+            return (done, quota.targetMinutes, "\(formatQuotaTime(done))/\(formatQuotaTime(quota.targetMinutes))")
+        case .scheduled:
+            let today = cal.component(.weekday, from: Date())
+            let isToday = quota.scheduledDays?.contains { $0.calendarWeekday == today } ?? false
+            if isToday {
+                let done = todaySubjectMinutes()[quota.subjectName, default: 0]
+                return (done, quota.targetMinutes, "\(formatQuotaTime(done))/\(formatQuotaTime(quota.targetMinutes))")
+            } else {
+                return (0, quota.targetMinutes, "not scheduled today")
+            }
+        case .oneTime:
+            let done = allTimeSubjectMinutes(for: quota.subjectName, since: quota.createdAt)
+            let daysLeft = cal.dateComponents([.day], from: Date(), to: quota.deadline ?? Date()).day ?? 0
+            let suffix = daysLeft > 0 ? " (\(daysLeft)d left)" : ""
+            return (done, quota.targetMinutes, "\(formatQuotaTime(done))/\(formatQuotaTime(quota.targetMinutes))\(suffix)")
+        }
+    }
+
+    private func todaySubjectMinutes() -> [String: Int] {
+        var result: [String: Int] = [:]
+        let cal = Calendar.current
+        for tl in userTimelapses where cal.isDateInToday(tl.createdAt) {
+            for seg in tl.subjectSegments {
+                result[seg.subject, default: 0] += seg.seconds / 60
+            }
+        }
+        return result
+    }
+
+    private func subjectMinutes(for subject: String, in component: Calendar.Component) -> Int {
+        let cal = Calendar.current
+        guard let interval = cal.dateInterval(of: component, for: Date()) else { return 0 }
+        var total = 0
+        for tl in userTimelapses where tl.createdAt >= interval.start {
+            for seg in tl.subjectSegments where seg.subject == subject {
+                total += seg.seconds / 60
+            }
+        }
+        return total
+    }
+
+    private func allTimeSubjectMinutes(for subject: String, since date: Date) -> Int {
+        var total = 0
+        for tl in userTimelapses where tl.createdAt >= date {
+            for seg in tl.subjectSegments where seg.subject == subject {
+                total += seg.seconds / 60
+            }
+        }
+        return total
     }
 
     // MARK: - Per-League Section
@@ -194,7 +529,7 @@ struct FantasyHomeView: View {
                 if !isTied {
                     Text(isWinning ? "▲" : "▼")
                         .font(.system(size: 10))
-                        .foregroundStyle(isWinning ? .green : .red)
+                        .foregroundStyle(isWinning ? quotaGreen : PigeonTheme.destructive)
                 }
             }
             .frame(width: 30)
@@ -211,9 +546,8 @@ struct FantasyHomeView: View {
             }
             .frame(maxWidth: .infinity)
         }
-        .padding(.vertical, 14)
-        .background(PigeonTheme.cardBackground.opacity(0.5))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .padding(.vertical, 16)
+        .pigeonGlassSurface(cornerRadius: 12)
     }
 
     // MARK: - Record Row
@@ -237,7 +571,7 @@ struct FantasyHomeView: View {
             if let rating {
                 statDivider
                 statCell(
-                    value: letterGrade(rating.overallRating),
+                    value: String(format: "%.0f", rating.overallRating),
                     label: "Rating"
                 )
             }
@@ -246,12 +580,12 @@ struct FantasyHomeView: View {
     }
 
     private func statCell(value: String, label: String) -> some View {
-        VStack(spacing: 1) {
+        VStack(spacing: 2) {
             Text(value)
                 .font(.gloucester(size: 15))
                 .foregroundStyle(PigeonTheme.primaryText)
             Text(label)
-                .font(.gloucester(size: 9))
+                .font(.gloucester(size: 10))
                 .foregroundStyle(PigeonTheme.tertiaryText)
                 .tracking(0.5)
         }
@@ -305,15 +639,14 @@ struct FantasyHomeView: View {
                     .foregroundStyle(.white)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)
-                    .background(.orange)
+                    .background(PigeonTheme.destructive)
                     .clipShape(Capsule())
             }
         }
-        .foregroundStyle(highlight ? .orange : PigeonTheme.secondaryText)
+        .foregroundStyle(highlight ? PigeonTheme.destructive : PigeonTheme.secondaryText)
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
-        .background(PigeonTheme.cardBackground.opacity(0.5))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .padding(.vertical, 10)
+        .pigeonGlassSurface(cornerRadius: 10)
     }
 
     // MARK: - Standings Preview
@@ -357,8 +690,7 @@ struct FantasyHomeView: View {
                     .background(team.id == myTeamID ? PigeonTheme.accent.opacity(0.08) : .clear)
                 }
             }
-            .background(PigeonTheme.cardBackground.opacity(0.5))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .pigeonGlassSurface(cornerRadius: 10)
         }
         .buttonStyle(.plain)
     }
@@ -379,8 +711,7 @@ struct FantasyHomeView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)
-        .background(PigeonTheme.cardBackground.opacity(0.5))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .pigeonGlassSurface(cornerRadius: 10)
     }
 
     // MARK: - Helpers
@@ -417,37 +748,19 @@ struct FantasyHomeView: View {
         let (label, color): (String, Color) = {
             switch status {
             case "pending": return ("PRE-DRAFT", PigeonTheme.tertiaryText)
-            case "in_progress": return ("DRAFTING", .orange)
-            case "completed": return ("ACTIVE", .green)
+            case "in_progress": return ("DRAFTING", Color(red: 0.85, green: 0.55, blue: 0.15))
+            case "completed": return ("ACTIVE", quotaGreen)
             default: return (status.uppercased(), PigeonTheme.tertiaryText)
             }
         }()
 
         return Text(label)
-            .font(.gloucester(size: 9))
+            .font(.gloucester(size: 10))
             .foregroundStyle(color)
-            .padding(.horizontal, 5)
+            .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(color.opacity(0.15))
-            .clipShape(RoundedRectangle(cornerRadius: 3))
-    }
-
-    private func letterGrade(_ rating: Double) -> String {
-        switch rating {
-        case 97...100: return "A+"
-        case 93..<97: return "A"
-        case 90..<93: return "A-"
-        case 87..<90: return "B+"
-        case 83..<87: return "B"
-        case 80..<83: return "B-"
-        case 77..<80: return "C+"
-        case 73..<77: return "C"
-        case 70..<73: return "C-"
-        case 67..<70: return "D+"
-        case 63..<67: return "D"
-        case 60..<63: return "D-"
-        default: return "F"
-        }
+            .background(color.opacity(0.12))
+            .clipShape(RoundedRectangle(cornerRadius: 4))
     }
 
     private func medalColor(for rank: Int) -> Color {
@@ -467,7 +780,7 @@ struct FantasyHomeView: View {
                 HStack(spacing: 10) {
                     Image(systemName: "envelope.badge.fill")
                         .font(.system(size: 16))
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Color(red: 0.85, green: 0.55, blue: 0.15))
                     VStack(alignment: .leading, spacing: 1) {
                         Text(item.leagueName)
                             .font(PigeonTheme.captionFont)
@@ -527,6 +840,7 @@ struct FantasyHomeView: View {
 
     private func loadData() async {
         guard !uid.isEmpty else { isLoading = false; return }
+        loadError = false
 
         do {
             async let leagueResult = SupabaseService.shared.fetchFantasyLeagues(forUser: uid)
@@ -584,6 +898,7 @@ struct FantasyHomeView: View {
             }
         } catch {
             print("[FANTASY HOME] Load failed: \(error)")
+            loadError = leagues.isEmpty
         }
 
         isLoading = false

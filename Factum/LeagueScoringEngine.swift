@@ -70,8 +70,9 @@ enum LeagueScoringEngine {
         multiplier: Int = 1
     ) -> PlayerScoreResult {
         // Filter timelapses for this player in the time window
+        let playerUIDUpper = playerUID.uppercased()
         let relevant = timelapses.filter { t in
-            t.authorID == playerUID && t.createdAt >= weekStart && t.createdAt <= weekEnd
+            t.authorID.uppercased() == playerUIDUpper && t.createdAt >= weekStart && t.createdAt <= weekEnd
         }
 
         var totalStudySeconds: Double = 0
@@ -189,137 +190,28 @@ enum LeagueScoringEngine {
 
 enum ManagerRatingEngine {
 
-    /// Calculate draft grade based on how drafted players have performed.
-    /// Compares each draft pick's total points to the league average for that position.
-    static func draftGrade(
-        myPicks: [DraftPick],
-        allRosterSlots: [RosterSlot],
-        timelapses: [StudyTimelapse],
-        seasonStart: Date,
-        now: Date,
-        config: ScoringConfig
+    /// Elo-style K-factor for weekly rating adjustments.
+    static let kFactor: Double = 32
+
+    /// Adjust a manager's rating after a head-to-head matchup result.
+    /// Uses a simplified Elo formula: base 500, K=32.
+    /// `myScore` and `oppScore` are the weekly fantasy point totals.
+    /// Returns the new rating for the manager.
+    static func adjustedRating(
+        currentRating: Double,
+        opponentRating: Double,
+        myScore: Double,
+        oppScore: Double
     ) -> Double {
-        guard !myPicks.isEmpty else { return 50 }
-
-        var myTotal: Double = 0
-        var leagueTotal: Double = 0
-        var leagueCount = 0
-
-        for slot in allRosterSlots {
-            let result = LeagueScoringEngine.calculateScore(
-                playerUID: slot.playerUID,
-                subject: slot.subjectName,
-                timelapses: timelapses,
-                weekStart: seasonStart,
-                weekEnd: now,
-                config: config
-            )
-            leagueTotal += result.finalScore
-            leagueCount += 1
-
-            if myPicks.contains(where: { $0.playerUID == slot.playerUID && $0.subjectName == slot.subjectName }) {
-                myTotal += result.finalScore
-            }
+        let expectedWin = 1.0 / (1.0 + pow(10.0, (opponentRating - currentRating) / 400.0))
+        let actualResult: Double
+        if myScore > oppScore {
+            actualResult = 1.0
+        } else if myScore < oppScore {
+            actualResult = 0.0
+        } else {
+            actualResult = 0.5
         }
-
-        let leagueAvg = leagueCount > 0 ? leagueTotal / Double(leagueCount) : 0
-        let myAvg = !myPicks.isEmpty ? myTotal / Double(myPicks.count) : 0
-
-        guard leagueAvg > 0 else { return 50 }
-        // Score relative to league average: 50 = average, scales ±50
-        return min(100, max(0, 50 + ((myAvg - leagueAvg) / leagueAvg) * 50))
-    }
-
-    /// Trade grade based on net point gain/loss from completed trades.
-    static func tradeGrade(
-        trades: [TradeProposal],
-        myTeamID: UUID,
-        rosterSlots: [RosterSlot],
-        timelapses: [StudyTimelapse],
-        seasonStart: Date,
-        now: Date,
-        config: ScoringConfig
-    ) -> Double {
-        let completedTrades = trades.filter { $0.status == "accepted" }
-        guard !completedTrades.isEmpty else { return 50 }
-
-        // Simplified: look at current roster performance of traded-for players
-        // vs traded-away players. Full implementation would track historical swaps.
-        return 50 // Baseline — improves as trade history accumulates
-    }
-
-    /// Roster management grade based on lineup optimization and free agent activity.
-    static func rosterManagementGrade(
-        rosterSlots: [RosterSlot],
-        timelapses: [StudyTimelapse],
-        weekStart: Date,
-        weekEnd: Date,
-        config: ScoringConfig
-    ) -> Double {
-        let activeSlots = rosterSlots.filter { $0.isActive }
-        let benchSlots = rosterSlots.filter { !$0.isActive }
-
-        guard !activeSlots.isEmpty else { return 50 }
-
-        // Check if the owner has their best players starting
-        var activeScores: [Double] = []
-        var benchScores: [Double] = []
-
-        for slot in activeSlots {
-            let result = LeagueScoringEngine.calculateScore(
-                playerUID: slot.playerUID,
-                subject: slot.subjectName,
-                timelapses: timelapses,
-                weekStart: weekStart,
-                weekEnd: weekEnd,
-                config: config
-            )
-            activeScores.append(result.finalScore)
-        }
-
-        for slot in benchSlots {
-            let result = LeagueScoringEngine.calculateScore(
-                playerUID: slot.playerUID,
-                subject: slot.subjectName,
-                timelapses: timelapses,
-                weekStart: weekStart,
-                weekEnd: weekEnd,
-                config: config
-            )
-            benchScores.append(result.finalScore)
-        }
-
-        // If any bench player outscored an active player, deduct points
-        let worstActive = activeScores.min() ?? 0
-        let bestBench = benchScores.max() ?? 0
-
-        if bestBench > worstActive && worstActive > 0 {
-            // Penalty for leaving points on the bench
-            let missDelta = (bestBench - worstActive) / max(1, bestBench)
-            return max(0, 80 - missDelta * 100)
-        }
-
-        // Free agent activity bonus
-        let freeAgentPickups = rosterSlots.filter { $0.acquiredVia == "free_agent" }.count
-        let activityBonus = min(20.0, Double(freeAgentPickups) * 5.0)
-
-        return min(100, 70 + activityBonus)
-    }
-
-    /// Consistency grade based on week-over-week performance stability.
-    static func consistencyGrade(weeklyScores: [Double]) -> Double {
-        guard weeklyScores.count >= 2 else { return 50 }
-
-        let mean = weeklyScores.reduce(0, +) / Double(weeklyScores.count)
-        guard mean > 0 else { return 50 }
-
-        let variance = weeklyScores.reduce(0) { $0 + pow($1 - mean, 2) } / Double(weeklyScores.count)
-        let stdDev = sqrt(variance)
-        let cv = stdDev / mean // Coefficient of variation
-
-        // Lower CV = more consistent = higher grade
-        // CV of 0 = perfect consistency = 100
-        // CV of 1+ = highly inconsistent = low grade
-        return min(100, max(0, 100 - cv * 80))
+        return currentRating + kFactor * (actualResult - expectedWin)
     }
 }

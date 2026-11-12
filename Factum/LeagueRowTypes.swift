@@ -257,11 +257,7 @@ struct ManagerRatingRow: Codable, Sendable, Identifiable {
     var id: UUID
     var leagueId: UUID
     var managerUid: String
-    var overallRating: Double
-    var draftGrade: Double
-    var tradeGrade: Double
-    var rosterManagementGrade: Double
-    var consistencyGrade: Double
+    var overallRating: Double              // Chess-style, base 500
     var weeklyRatingsJson: String?
     var updatedAt: Date
 
@@ -270,10 +266,6 @@ struct ManagerRatingRow: Codable, Sendable, Identifiable {
         case leagueId = "league_id"
         case managerUid = "manager_uid"
         case overallRating = "overall_rating"
-        case draftGrade = "draft_grade"
-        case tradeGrade = "trade_grade"
-        case rosterManagementGrade = "roster_management_grade"
-        case consistencyGrade = "consistency_grade"
         case weeklyRatingsJson = "weekly_ratings_json"
         case updatedAt = "updated_at"
     }

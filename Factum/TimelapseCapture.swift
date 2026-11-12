@@ -378,6 +378,7 @@ final class TimelapseCaptureManager {
             let capturedSession = session
             Task.detached {
                 if !capturedSession.isRunning {
+                    print("[CAMERA] Session existed but wasn't running — restarting")
                     capturedSession.startRunning()
                 }
                 await MainActor.run { [weak self] in
@@ -389,19 +390,20 @@ final class TimelapseCaptureManager {
         
         // Try ultra wide first for wide-angle support, fall back to wide
         let device = bestCamera(for: currentCameraPosition)
-        guard let device else { return }
+        guard let device else {
+            print("[CAMERA] ERROR: No camera device found for position \(currentCameraPosition)")
+            return
+        }
         
-        guard let input = try? AVCaptureDeviceInput(device: device) else { return }
+        guard let input = try? AVCaptureDeviceInput(device: device) else {
+            print("[CAMERA] ERROR: Could not create input for \(device.localizedName)")
+            return
+        }
         
         // Movie file output for continuous video recording
         let movie = AVCaptureMovieFileOutput()
         
         session.beginConfiguration()
-        // Use .high preset for video recording — this is what Apple's AVCam
-        // uses for movie capture.  .high supports multi-lens virtual cameras
-        // (triple, dual-wide) with their full zoom range including ultra-wide.
-        // .hd1920x1080 restricts to a single lens; .photo is optimized for
-        // still capture and may not work well with AVCaptureMovieFileOutput.
         session.sessionPreset = .high
         
         if session.canAddInput(input) {
@@ -429,16 +431,15 @@ final class TimelapseCaptureManager {
         print("[CAMERA] Zoom range: \(device.minAvailableVideoZoomFactor)x – \(device.maxAvailableVideoZoomFactor)x")
         print("[CAMERA] hasUltraWide: \(hasUltraWide), minZoom: \(minZoomFactor)")
         
-        // Start running on a background queue to avoid blocking the main thread
+        // Start running on a background thread to avoid blocking the main thread.
+        // startRunning() is synchronous and blocks until the session is fully started.
         let capturedSession = session
         Task.detached {
             capturedSession.startRunning()
+            print("[CAMERA] Session running: \(capturedSession.isRunning)")
             await MainActor.run { [weak self] in
                 guard let self else { return }
-                // Re-query zoom limits now that the session is running —
-                // multi-lens devices may report switch-over factors only after start.
                 self.updateZoomLimits()
-                // Start at the widest FOV for the current camera position.
                 let startZoom = (self.currentCameraPosition == .front && self.minZoomFactor < 1.0)
                     ? self.minZoomFactor : self.wideAngleZoomFactor
                 self.setZoom(startZoom)
@@ -561,52 +562,58 @@ final class TimelapseCaptureManager {
             return
         }
         
-        captureSession.beginConfiguration()
+        let session = captureSession
+        session.beginConfiguration()
         
         // Remove all existing inputs and outputs
-        for input in captureSession.inputs {
-            captureSession.removeInput(input)
+        for input in session.inputs {
+            session.removeInput(input)
         }
-        for output in captureSession.outputs {
-            captureSession.removeOutput(output)
+        for output in session.outputs {
+            session.removeOutput(output)
         }
         
         // Add new input
-        if captureSession.canAddInput(newInput) {
-            captureSession.addInput(newInput)
+        if session.canAddInput(newInput) {
+            session.addInput(newInput)
         } else {
             print("[FLIP] ERROR: canAddInput returned false")
         }
         
         // Create fresh outputs
         let newMovie = AVCaptureMovieFileOutput()
-        if captureSession.canAddOutput(newMovie) {
-            captureSession.addOutput(newMovie)
+        if session.canAddOutput(newMovie) {
+            session.addOutput(newMovie)
         } else {
             print("[FLIP] ERROR: canAddOutput(movie) returned false")
         }
         movieOutput = newMovie
         
         let newPhoto = AVCapturePhotoOutput()
-        if captureSession.canAddOutput(newPhoto) {
-            captureSession.addOutput(newPhoto)
+        if session.canAddOutput(newPhoto) {
+            session.addOutput(newPhoto)
         } else {
             print("[FLIP] ERROR: canAddOutput(photo) returned false")
         }
         photoOutput = newPhoto
         
-        captureSession.commitConfiguration()
+        session.commitConfiguration()
         currentCameraPosition = newPosition
         currentDevice = newDevice
         configureConnectionOrientation()
         updateZoomLimits()
-        // Start at the widest FOV: on multi-lens back cameras this is the
-        // wide-angle lens (wideAngleZoomFactor, typically 2.0); on front
-        // cameras or single-lens devices with sub-1.0 min, use minZoomFactor
-        // so the user gets the largest field of view immediately.
         let startZoom = (currentCameraPosition == .front && minZoomFactor < 1.0)
             ? minZoomFactor : wideAngleZoomFactor
         setZoom(startZoom)
+        
+        // Ensure the session is running after reconfiguration — removing all
+        // inputs/outputs can sometimes stop the session on certain devices.
+        let capturedSession = session
+        Task.detached {
+            if !capturedSession.isRunning {
+                capturedSession.startRunning()
+            }
+        }
         
         print("[FLIP] Success — now on \(newPosition == .front ? "front" : "back"), device: \(newDevice.localizedName)")
     }
@@ -949,6 +956,22 @@ final class TimelapseCaptureManager {
         subjectSegmentStart = Date()
         // Persist state immediately after subject switch
         saveSessionSnapshot()
+    }
+    
+    /// Returns a live snapshot of subject segments including the in-progress segment.
+    /// Does NOT mutate state — safe to call every tick for UI display.
+    var liveSubjectSegments: [(subject: String, seconds: Int)] {
+        var segments = subjectSegments
+        // Add the current in-progress segment's elapsed time
+        if let start = subjectSegmentStart {
+            let liveSeconds = max(0, Int(Date().timeIntervalSince(start)))
+            if let idx = segments.firstIndex(where: { $0.subject == currentSubject }) {
+                segments[idx].seconds += liveSeconds
+            } else {
+                segments.append((subject: currentSubject, seconds: liveSeconds))
+            }
+        }
+        return segments
     }
     
     /// Returns the finalized subject segments for the completed session.

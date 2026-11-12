@@ -209,6 +209,8 @@ struct DraftRoomView: View {
     @State private var memberProfiles: [String: UserRow] = [:]
     @State private var isLoading = true
     @State private var isMakingPick = false
+    @State private var remainingSeconds: Int = 30
+    @State private var pickTimer: Timer?
     @State private var appeared = false
     @State private var pollTimer: Timer?
     @Environment(\.dismiss) private var dismiss
@@ -227,6 +229,7 @@ struct DraftRoomView: View {
     }
     private var currentRound: Int { (currentPickIndex / max(1, teams.count)) + 1 }
     private var pickInRound: Int { (currentPickIndex % max(1, teams.count)) + 1 }
+    private var secondsPerPick: Int { max(1, league?.draftSecondsPerPick ?? 30) }
 
     // Filter out already-drafted combos
     private var availablePlayers: [(uid: String, displayName: String, subject: String)] {
@@ -285,6 +288,20 @@ struct DraftRoomView: View {
                             Text("\(name) is picking")
                                 .font(PigeonTheme.captionFont)
                                 .foregroundStyle(PigeonTheme.tertiaryText)
+                        }
+
+                        if isMyTurn {
+                            HStack(spacing: 6) {
+                                Image(systemName: "timer")
+                                    .font(.system(size: 12, weight: .medium))
+                                Text("\(remainingSeconds)s")
+                                    .font(.gloucester(size: 12))
+                            }
+                            .foregroundStyle(remainingSeconds > 5 ? PigeonTheme.secondaryText : PigeonTheme.destructive)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(PigeonTheme.secondaryText.opacity(0.08))
+                            .clipShape(Capsule())
                         }
                     }
                     .padding(16)
@@ -366,7 +383,7 @@ struct DraftRoomView: View {
                                     .pigeonGlassSurface(cornerRadius: 12)
                                 }
                                 .buttonStyle(.plain)
-                                .disabled(isMakingPick)
+                                .disabled(isMakingPick || remainingSeconds <= 0)
                             }
                         }
                         .staggeredAppear(index: 3, appeared: appeared)
@@ -384,7 +401,10 @@ struct DraftRoomView: View {
             withAnimation { appeared = true }
             startPolling()
         }
-        .onDisappear { stopPolling() }
+        .onDisappear {
+            stopPolling()
+            stopPickTimer()
+        }
         .task { await loadData() }
     }
 
@@ -417,6 +437,7 @@ struct DraftRoomView: View {
     }
 
     private func refreshDraftState() async {
+        let wasMyTurn = isMyTurn
         do {
             league = try await SupabaseService.shared.fetchFantasyLeague(id: leagueID)
             picks = try await SupabaseService.shared.fetchDraftPicks(leagueID: leagueID)
@@ -426,6 +447,13 @@ struct DraftRoomView: View {
                 try await SupabaseService.shared.completeDraft(leagueID: leagueID)
                 self.league?.draftStatus = "completed"
                 stopPolling()
+            }
+
+            let nowMyTurn = isMyTurn
+            if nowMyTurn && !wasMyTurn {
+                startPickTimer()
+            } else if !nowMyTurn {
+                stopPickTimer()
             }
         } catch {
             print("[DRAFT] Poll failed: \(error)")
@@ -488,6 +516,38 @@ struct DraftRoomView: View {
             print("[DRAFT] Load failed: \(error)")
         }
         isLoading = false
+
+        if isMyTurn {
+            startPickTimer()
+        } else {
+            stopPickTimer()
+        }
+    }
+
+    // MARK: - Pick Timer Management
+
+    private func startPickTimer() {
+        stopPickTimer()
+        remainingSeconds = secondsPerPick
+        pickTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+            if remainingSeconds > 0 {
+                remainingSeconds -= 1
+            } else {
+                stopPickTimer()
+                Task { await attemptAutoPick() }
+            }
+        }
+    }
+
+    private func stopPickTimer() {
+        pickTimer?.invalidate()
+        pickTimer = nil
+    }
+    
+    private func attemptAutoPick() async {
+        guard isMyTurn, !isMakingPick else { return }
+        guard let first = availablePlayers.first else { return }
+        await makePick(playerUID: first.uid, subject: first.subject)
     }
 }
 

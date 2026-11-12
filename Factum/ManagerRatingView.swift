@@ -2,7 +2,7 @@
 //  ManagerRatingView.swift
 //  Pigeon
 //
-//  Detailed manager rating breakdown and league-wide ranking
+//  Manager ratings — chess-style numeric rating (base 500)
 //
 
 import SwiftUI
@@ -45,16 +45,9 @@ struct ManagerRatingView: View {
                         .staggeredAppear(index: 1, appeared: appeared)
                 }
 
-                // League Rankings
+                // League Rankings (with inline expansion)
                 leagueRankings
                     .staggeredAppear(index: 2, appeared: appeared)
-
-                // Selected Manager Detail
-                if let selectedUID = selectedManagerUID,
-                   let rating = ratings.first(where: { $0.managerUid == selectedUID }) {
-                    managerDetail(rating)
-                        .staggeredAppear(index: 3, appeared: appeared)
-                }
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 100)
@@ -71,38 +64,19 @@ struct ManagerRatingView: View {
 
     @ViewBuilder
     private func myRatingCard(_ rating: ManagerRatingRow) -> some View {
-        VStack(spacing: 16) {
-            HStack {
+        HStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text("My Rating")
                     .font(PigeonTheme.headlineFont)
                     .foregroundStyle(PigeonTheme.primaryText)
-                Spacer()
-                Text(letterGrade(for: rating.overallRating))
-                    .font(.gloucester(size: 40))
-                    .foregroundStyle(gradeColor(for: rating.overallRating))
+                Text("chess-style elo")
+                    .font(.gloucester(size: 11))
+                    .foregroundStyle(PigeonTheme.tertiaryText)
             }
-
-            // Overall score bar
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("Overall")
-                        .font(PigeonTheme.captionFont)
-                        .foregroundStyle(PigeonTheme.secondaryText)
-                    Spacer()
-                    Text(String(format: "%.0f", rating.overallRating))
-                        .font(PigeonTheme.bodyFont)
-                        .foregroundStyle(PigeonTheme.primaryText)
-                }
-                ratingBar(value: rating.overallRating)
-            }
-
-            Divider().foregroundStyle(PigeonTheme.separator)
-
-            // Component grades
-            gradeRow("Draft", value: rating.draftGrade, weight: "20%")
-            gradeRow("Trades", value: rating.tradeGrade, weight: "20%")
-            gradeRow("Roster Mgmt", value: rating.rosterManagementGrade, weight: "30%")
-            gradeRow("Consistency", value: rating.consistencyGrade, weight: "30%")
+            Spacer()
+            Text(String(format: "%.0f", rating.overallRating))
+                .font(.gloucester(size: 44))
+                .foregroundStyle(ratingColor(rating.overallRating))
         }
         .padding(PigeonTheme.spacing16)
         .pigeonGlassSurface()
@@ -111,23 +85,40 @@ struct ManagerRatingView: View {
     // MARK: - League Rankings
 
     private var leagueRankings: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 0) {
             Text("League Rankings")
                 .font(PigeonTheme.headlineFont)
                 .foregroundStyle(PigeonTheme.primaryText)
+                .padding(.bottom, 12)
 
             let sorted = ratings.sorted { $0.overallRating > $1.overallRating }
             ForEach(Array(sorted.enumerated()), id: \.element.id) { index, rating in
-                Button {
-                    withAnimation(.smooth(duration: 0.3)) {
-                        if selectedManagerUID == rating.managerUid {
-                            selectedManagerUID = nil
-                        } else {
-                            selectedManagerUID = rating.managerUid
+                let isSelected = selectedManagerUID == rating.managerUid
+
+                VStack(spacing: 0) {
+                    Button {
+                        withAnimation(.smooth(duration: 0.3)) {
+                            if selectedManagerUID == rating.managerUid {
+                                selectedManagerUID = nil
+                            } else {
+                                selectedManagerUID = rating.managerUid
+                            }
                         }
+                    } label: {
+                        rankingRow(rating: rating, rank: index + 1)
                     }
-                } label: {
-                    rankingRow(rating: rating, rank: index + 1)
+
+                    // Inline expansion directly below the tapped row
+                    if isSelected {
+                        managerDetail(rating)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+                }
+
+                if index < sorted.count - 1 {
+                    Divider()
+                        .overlay(PigeonTheme.separator)
+                        .padding(.leading, 42)
                 }
             }
         }
@@ -146,7 +137,7 @@ struct ManagerRatingView: View {
             // Rank
             Text("#\(rank)")
                 .font(PigeonTheme.bodyFont)
-                .foregroundStyle(rank <= 3 ? gradeColor(for: rating.overallRating) : PigeonTheme.tertiaryText)
+                .foregroundStyle(rank <= 3 ? ratingColor(rating.overallRating) : PigeonTheme.tertiaryText)
                 .frame(width: 30)
 
             // Avatar
@@ -172,7 +163,7 @@ struct ManagerRatingView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(profile?.displayName ?? "Manager")
                     .font(PigeonTheme.bodyFont)
-                    .foregroundStyle(isMe ? PigeonTheme.primaryText : PigeonTheme.primaryText)
+                    .foregroundStyle(PigeonTheme.primaryText)
                     .fontWeight(isMe ? .semibold : .regular)
                 if let team {
                     Text(team.teamName)
@@ -183,169 +174,60 @@ struct ManagerRatingView: View {
 
             Spacer()
 
-            // Letter grade
-            Text(letterGrade(for: rating.overallRating))
-                .font(.gloucester(size: 20))
-                .foregroundStyle(gradeColor(for: rating.overallRating))
-
-            // Score
+            // Numeric rating
             Text(String(format: "%.0f", rating.overallRating))
-                .font(PigeonTheme.captionFont)
-                .foregroundStyle(PigeonTheme.secondaryText)
-                .frame(width: 30, alignment: .trailing)
+                .font(.gloucester(size: 20))
+                .foregroundStyle(ratingColor(rating.overallRating))
 
             Image(systemName: isSelected ? "chevron.up" : "chevron.down")
                 .font(.system(size: 12))
                 .foregroundStyle(PigeonTheme.tertiaryText)
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 8)
         .contentShape(Rectangle())
     }
 
-    // MARK: - Manager Detail Expansion
+    // MARK: - Inline Manager Detail
 
     @ViewBuilder
     private func managerDetail(_ rating: ManagerRatingRow) -> some View {
-        let profile = memberProfiles[rating.managerUid]
         let team = teams.first(where: { $0.ownerUid == rating.managerUid })
 
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(profile?.displayName ?? "Manager")
-                        .font(PigeonTheme.headlineFont)
-                        .foregroundStyle(PigeonTheme.primaryText)
-                    if let team {
-                        Text("\(team.teamName) — \(team.wins)W \(team.losses)L")
-                            .font(PigeonTheme.captionFont)
-                            .foregroundStyle(PigeonTheme.secondaryText)
-                    }
-                }
-                Spacer()
-                VStack(spacing: 2) {
-                    Text(letterGrade(for: rating.overallRating))
-                        .font(.gloucester(size: 32))
-                        .foregroundStyle(gradeColor(for: rating.overallRating))
-                    Text(String(format: "%.1f", rating.overallRating))
-                        .font(PigeonTheme.captionFont)
-                        .foregroundStyle(PigeonTheme.secondaryText)
+        VStack(alignment: .leading, spacing: 8) {
+            if let team {
+                HStack(spacing: 0) {
+                    statPill(value: "\(team.wins)-\(team.losses)", label: "Record")
+                    statPill(value: String(format: "%.0f", team.totalPointsFor), label: "PF")
+                    statPill(value: String(format: "%.0f", team.totalPointsAgainst), label: "PA")
+                    statPill(value: String(format: "%.0f", rating.overallRating), label: "Rating")
                 }
             }
-
-            Divider().foregroundStyle(PigeonTheme.separator)
-
-            // Component breakdown
-            gradeDetailRow("Draft", value: rating.draftGrade, weight: "20%",
-                           description: "Performance of drafted players vs league average")
-            gradeDetailRow("Trades", value: rating.tradeGrade, weight: "20%",
-                           description: "Net point gain/loss from completed trades")
-            gradeDetailRow("Roster Management", value: rating.rosterManagementGrade, weight: "30%",
-                           description: "Lineup optimization and free agent activity")
-            gradeDetailRow("Consistency", value: rating.consistencyGrade, weight: "30%",
-                           description: "Week-over-week performance stability")
         }
-        .padding(PigeonTheme.spacing16)
-        .pigeonGlassSurface()
+        .padding(.top, 4)
+        .padding(.bottom, 8)
+        .padding(.leading, 42)
     }
 
-    // MARK: - Reusable Components
-
-    @ViewBuilder
-    private func gradeRow(_ label: String, value: Double, weight: String) -> some View {
-        VStack(spacing: 4) {
-            HStack {
-                Text(label)
-                    .font(PigeonTheme.captionFont)
-                    .foregroundStyle(PigeonTheme.secondaryText)
-                Text(weight)
-                    .font(PigeonTheme.smallFont)
-                    .foregroundStyle(PigeonTheme.tertiaryText)
-                Spacer()
-                Text(letterGrade(for: value))
-                    .font(PigeonTheme.captionFont)
-                    .foregroundStyle(gradeColor(for: value))
-                Text(String(format: "%.0f", value))
-                    .font(PigeonTheme.captionFont)
-                    .foregroundStyle(PigeonTheme.primaryText)
-                    .frame(width: 30, alignment: .trailing)
-            }
-            ratingBar(value: value)
+    private func statPill(value: String, label: String) -> some View {
+        VStack(spacing: 2) {
+            Text(value)
+                .font(.gloucester(size: 14))
+                .foregroundStyle(PigeonTheme.primaryText)
+            Text(label)
+                .font(.gloucester(size: 10))
+                .foregroundStyle(PigeonTheme.tertiaryText)
         }
-    }
-
-    @ViewBuilder
-    private func gradeDetailRow(_ label: String, value: Double, weight: String, description: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(label)
-                            .font(PigeonTheme.bodyFont)
-                            .foregroundStyle(PigeonTheme.primaryText)
-                        Text(weight)
-                            .font(PigeonTheme.smallFont)
-                            .foregroundStyle(PigeonTheme.tertiaryText)
-                    }
-                    Text(description)
-                        .font(PigeonTheme.smallFont)
-                        .foregroundStyle(PigeonTheme.tertiaryText)
-                }
-                Spacer()
-                VStack(spacing: 2) {
-                    Text(letterGrade(for: value))
-                        .font(.gloucester(size: 18))
-                        .foregroundStyle(gradeColor(for: value))
-                    Text(String(format: "%.0f", value))
-                        .font(PigeonTheme.smallFont)
-                        .foregroundStyle(PigeonTheme.secondaryText)
-                }
-            }
-            ratingBar(value: value)
-        }
-        .padding(.vertical, 4)
-    }
-
-    @ViewBuilder
-    private func ratingBar(value: Double) -> some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(PigeonTheme.separator)
-                    .frame(height: 6)
-                Capsule()
-                    .fill(gradeColor(for: value))
-                    .frame(width: geo.size.width * CGFloat(min(value, 100) / 100.0), height: 6)
-            }
-        }
-        .frame(height: 6)
+        .frame(maxWidth: .infinity)
     }
 
     // MARK: - Helpers
 
-    private func letterGrade(for score: Double) -> String {
-        switch score {
-        case 97...100: return "A+"
-        case 93..<97: return "A"
-        case 90..<93: return "A-"
-        case 87..<90: return "B+"
-        case 83..<87: return "B"
-        case 80..<83: return "B-"
-        case 77..<80: return "C+"
-        case 73..<77: return "C"
-        case 70..<73: return "C-"
-        case 67..<70: return "D+"
-        case 63..<67: return "D"
-        case 60..<63: return "D-"
-        default: return "F"
-        }
-    }
-
-    private func gradeColor(for score: Double) -> Color {
-        switch score {
-        case 90...100: return .green
-        case 80..<90: return .blue
-        case 70..<80: return .yellow
-        case 60..<70: return .orange
+    private func ratingColor(_ rating: Double) -> Color {
+        switch rating {
+        case 700...: return .green
+        case 550..<700: return .blue
+        case 450..<550: return PigeonTheme.primaryText
+        case 350..<450: return .orange
         default: return PigeonTheme.destructive
         }
     }
