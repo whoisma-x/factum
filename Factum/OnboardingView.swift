@@ -45,7 +45,8 @@ struct OnboardingView: View {
                     welcomePage.tag(0)
                     timelapsePage.tag(1)
                     socialPage.tag(2)
-                    getStartedPage.tag(3)
+                    quotaIntroPage.tag(3)
+                    getStartedPage.tag(4)
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
                 .animation(.easeInOut(duration: 0.35), value: currentPage)
@@ -53,7 +54,7 @@ struct OnboardingView: View {
                 // Page indicator + bottom button — always present for stable layout, fades on page 3
                 VStack(spacing: 0) {
                     HStack(spacing: 8) {
-                        ForEach(0..<4, id: \.self) { index in
+                        ForEach(0..<5, id: \.self) { index in
                             RoundedRectangle(cornerRadius: 3)
                                 .fill(index == currentPage ? PigeonTheme.accent : PigeonTheme.elevated)
                                 .frame(width: index == currentPage ? 24 : 8, height: 8)
@@ -79,9 +80,9 @@ struct OnboardingView: View {
                     .padding(.horizontal, 24)
                     .padding(.bottom, 40)
                 }
-                .opacity(currentPage < 3 ? 1 : 0)
+                .opacity(currentPage < 4 ? 1 : 0)
                 .animation(.easeInOut(duration: 0.3), value: currentPage)
-                .allowsHitTesting(currentPage < 3)
+                .allowsHitTesting(currentPage < 4)
             }
         }
         .ignoresSafeArea(.keyboard)
@@ -202,7 +203,44 @@ struct OnboardingView: View {
         .padding(.horizontal, 32)
     }
     
-    // MARK: - Page 4: Get Started
+    // MARK: - Page 4: Study Quotas Intro
+    
+    private var quotaIntroPage: some View {
+        VStack(spacing: 24) {
+            Spacer()
+            
+            ZStack {
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(PigeonTheme.cardBackground)
+                    .frame(width: 200, height: 160)
+                
+                VStack(spacing: 12) {
+                    Image(systemName: "target")
+                        .font(.system(size: 48))
+                        .foregroundStyle(quotaGreen)
+                    
+                    Text("on track")
+                        .font(PigeonTheme.font(20, weight: .bold))
+                        .foregroundStyle(PigeonTheme.primaryText)
+                }
+            }
+            
+            Text("study quotas")
+                .font(PigeonTheme.titleFont)
+                .foregroundStyle(PigeonTheme.primaryText)
+            
+            Text("set study goals for each subject\n— daily, weekly, or by a deadline —\nand track your progress")
+                .font(PigeonTheme.bodyFont)
+                .foregroundStyle(PigeonTheme.secondaryText)
+                .multilineTextAlignment(.center)
+                .lineSpacing(5)
+            
+            Spacer()
+        }
+        .padding(.horizontal, 32)
+    }
+    
+    // MARK: - Page 5: Get Started
     
     private var passwordsMatch: Bool {
         !password.isEmpty && password == confirmPassword
@@ -522,9 +560,9 @@ struct OnboardingView: View {
                     .padding(.horizontal, 24)
                 }
                 
-                // Page indicator dots (inline on page 3)
+                // Page indicator dots (inline on page 4)
                 HStack(spacing: 8) {
-                    ForEach(0..<4, id: \.self) { index in
+                    ForEach(0..<5, id: \.self) { index in
                         RoundedRectangle(cornerRadius: 3)
                             .fill(index == currentPage ? PigeonTheme.accent : PigeonTheme.elevated)
                             .frame(width: index == currentPage ? 24 : 8, height: 8)

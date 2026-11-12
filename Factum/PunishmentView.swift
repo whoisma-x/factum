@@ -348,3 +348,91 @@ struct ProposePunishmentSheet: View {
         isSending = false
     }
 }
+
+// MARK: - Add Punishment To Pool Sheet
+
+struct AddPunishmentToPoolSheet: View {
+    let leagueID: UUID
+    var onCreated: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var description = ""
+    @State private var isSending = false
+
+    private let uid = AuthService.shared.currentUserID
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 20) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("PUNISHMENT IDEA")
+                            .pigeonSectionTitle()
+                        Text("Add a punishment to the pool. Each week, league members vote on which punishment the loser has to do.")
+                            .font(PigeonTheme.smallFont)
+                            .foregroundStyle(PigeonTheme.tertiaryText)
+                        TextField("Describe the punishment...", text: $description, axis: .vertical)
+                            .font(PigeonTheme.bodyFont)
+                            .foregroundStyle(PigeonTheme.primaryText)
+                            .lineLimit(3...6)
+                            .padding(14)
+                            .background(PigeonTheme.cardBackground)
+                            .clipShape(RoundedRectangle(cornerRadius: PigeonTheme.cornerField))
+                    }
+
+                    Button {
+                        Haptics.medium()
+                        Task { await addToPool() }
+                    } label: {
+                        if isSending {
+                            ProgressView().frame(maxWidth: .infinity)
+                        } else {
+                            Text("Add to Pool").frame(maxWidth: .infinity)
+                        }
+                    }
+                    .buttonStyle(PigeonButtonStyle())
+                    .disabled(description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSending)
+                }
+                .padding(20)
+                .padding(.bottom, 40)
+            }
+            .background(PigeonTheme.background)
+            .navigationTitle("Add Punishment")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                        .font(PigeonTheme.bodyFont)
+                }
+            }
+        }
+    }
+
+    private func addToPool() async {
+        let trimmed = description.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        isSending = true
+        // Pool items use: weekNumber=0, targetUid="pool", reason=submitterUID, status="pool"
+        let row = PunishmentRow(
+            id: UUID(),
+            leagueId: leagueID,
+            weekNumber: 0,
+            targetUid: "pool",
+            reason: uid,
+            punishmentDescription: trimmed,
+            approvalVotes: [],
+            status: "pool",
+            createdAt: Date()
+        )
+        do {
+            try await SupabaseService.shared.proposePunishment(row)
+            Haptics.success()
+            onCreated()
+            dismiss()
+        } catch {
+            print("[PUNISH] Add to pool failed: \(error)")
+            Haptics.error()
+        }
+        isSending = false
+    }
+}

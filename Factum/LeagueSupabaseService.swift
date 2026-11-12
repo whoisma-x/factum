@@ -181,6 +181,29 @@ extension SupabaseService {
             .execute()
     }
 
+    func updateRosterSlotMultiplier(slotID: UUID, multiplier: Int) async throws {
+        try await supabase.from("fantasy_roster_slots")
+            .update(["multiplier": multiplier], returning: .minimal)
+            .eq("id", value: slotID)
+            .execute()
+    }
+
+    /// Batch update: set is_active and multiplier for a slot in one call.
+    func updateRosterSlot(slotID: UUID, isActive: Bool, multiplier: Int) async throws {
+        struct SlotUpdate: Encodable {
+            let isActive: Bool
+            let multiplier: Int
+            enum CodingKeys: String, CodingKey {
+                case isActive = "is_active"
+                case multiplier
+            }
+        }
+        try await supabase.from("fantasy_roster_slots")
+            .update(SlotUpdate(isActive: isActive, multiplier: multiplier), returning: .minimal)
+            .eq("id", value: slotID)
+            .execute()
+    }
+
     // MARK: - Draft
 
     func startDraft(leagueID: UUID, draftOrder: [String]) async throws {
@@ -258,11 +281,131 @@ extension SupabaseService {
             .execute()
     }
 
+    func insertMatchups(_ rows: [WeeklyMatchupRow]) async throws {
+        guard !rows.isEmpty else { return }
+        try await supabase.from("fantasy_matchups")
+            .insert(rows, returning: .minimal)
+            .execute()
+    }
+
     func finalizeWeek(leagueID: UUID, weekNumber: Int) async throws {
         try await supabase.rpc("finalize_week", params: FinalizeWeekParams(
             pLeagueId: leagueID,
             pWeekNumber: weekNumber
         )).execute()
+    }
+
+    /// Update a matchup's scores and winner after finalization.
+    func updateMatchupResult(matchupID: UUID, team1Score: Double, team2Score: Double, winnerTeamID: UUID?) async throws {
+        struct MatchupScoreUpdate: Encodable {
+            let team1Score: Double
+            let team2Score: Double
+            let winnerTeamId: UUID?
+            enum CodingKeys: String, CodingKey {
+                case team1Score = "team1_score"
+                case team2Score = "team2_score"
+                case winnerTeamId = "winner_team_id"
+            }
+        }
+        try await supabase.from("fantasy_matchups")
+            .update(MatchupScoreUpdate(team1Score: team1Score, team2Score: team2Score, winnerTeamId: winnerTeamID), returning: .minimal)
+            .eq("id", value: matchupID)
+            .execute()
+    }
+
+    /// Update a team's win/loss record and points.
+    func updateTeamRecord(_ team: FantasyTeamRow) async throws {
+        struct TeamRecordUpdate: Encodable {
+            let wins: Int
+            let losses: Int
+            let ties: Int
+            let totalPointsFor: Double
+            let totalPointsAgainst: Double
+            enum CodingKeys: String, CodingKey {
+                case wins, losses, ties
+                case totalPointsFor = "total_points_for"
+                case totalPointsAgainst = "total_points_against"
+            }
+        }
+        try await supabase.from("fantasy_teams")
+            .update(TeamRecordUpdate(wins: team.wins, losses: team.losses, ties: team.ties, totalPointsFor: team.totalPointsFor, totalPointsAgainst: team.totalPointsAgainst), returning: .minimal)
+            .eq("id", value: team.id)
+            .execute()
+    }
+
+    // MARK: - Matchup Generation
+
+    /// Generate a full season of round-robin matchups for a league.
+    /// Each week, 4 matchups are created (8 teams → 4 pairs). Handles odd team counts with bye weeks.
+    func generateSeasonMatchups(league: FantasyLeagueRow, teams: [FantasyTeamRow]) async throws -> [WeeklyMatchupRow] {
+        let teamIDs = teams.map { $0.id }
+        let n = teamIDs.count
+        guard n >= 2 else { return [] }
+
+        let calendar = Calendar(identifier: .iso8601)
+        let seasonStart = league.seasonStartDate
+        let totalWeeks = max(1, calendar.dateComponents([.day], from: league.seasonStartDate, to: league.seasonEndDate).day.map { $0 / 7 } ?? 1)
+
+        // Round-robin uses n-1 rounds if n is even, or n rounds if odd (one bye each round)
+        var ids = teamIDs
+        let useBye = n % 2 != 0
+        if useBye { ids.append(UUID()) } // phantom team for bye
+        let roundRobinCount = ids.count - 1
+
+        var allMatchups: [WeeklyMatchupRow] = []
+
+        for week in 1...totalWeeks {
+            let roundIndex = (week - 1) % roundRobinCount
+            let weekStart = calendar.date(byAdding: .day, value: (week - 1) * 7, to: seasonStart) ?? seasonStart
+            let weekEnd = calendar.date(byAdding: .day, value: 6, to: weekStart)?.addingTimeInterval(86399) ?? weekStart
+
+            // Circle method: fix ids[0], rotate the rest
+            var rotated = ids
+            if roundIndex > 0 {
+                let tail = Array(ids.dropFirst())
+                let shifted = Array(tail.suffix(roundIndex)) + Array(tail.dropLast(roundIndex))
+                rotated = [ids[0]] + shifted
+            }
+
+            let half = rotated.count / 2
+            for i in 0..<half {
+                let t1 = rotated[i]
+                let t2 = rotated[rotated.count - 1 - i]
+
+                let isByeMatch = useBye && (!teamIDs.contains(t1) || !teamIDs.contains(t2))
+                if isByeMatch {
+                    // Create a bye matchup for the real team
+                    let realTeam = teamIDs.contains(t1) ? t1 : t2
+                    allMatchups.append(WeeklyMatchupRow(
+                        id: UUID(), leagueId: league.id, weekNumber: week,
+                        team1Id: realTeam, team2Id: realTeam,
+                        team1Score: 0, team2Score: 0, winnerTeamId: nil,
+                        weekStartDate: weekStart, weekEndDate: weekEnd,
+                        isPlayoff: false, isBye: true
+                    ))
+                } else {
+                    allMatchups.append(WeeklyMatchupRow(
+                        id: UUID(), leagueId: league.id, weekNumber: week,
+                        team1Id: t1, team2Id: t2,
+                        team1Score: 0, team2Score: 0, winnerTeamId: nil,
+                        weekStartDate: weekStart, weekEndDate: weekEnd,
+                        isPlayoff: false, isBye: false
+                    ))
+                }
+            }
+        }
+
+        try await insertMatchups(allMatchups)
+        return allMatchups
+    }
+
+    /// Delete all non-finalized matchups for a league (matchups with no winner).
+    func deleteUnfinalizedMatchups(leagueID: UUID) async throws {
+        try await supabase.from("fantasy_matchups")
+            .delete(returning: .minimal)
+            .eq("league_id", value: leagueID)
+            .is("winner_team_id", value: nil)
+            .execute()
     }
 
     // MARK: - Trades
@@ -348,6 +491,65 @@ extension SupabaseService {
 
         try await supabase.from("fantasy_punishments")
             .update(["approval_votes": votes], returning: .minimal)
+            .eq("id", value: punishmentID)
+            .execute()
+    }
+
+    /// Add a weekly vote token ("uid:weekN") for a pool punishment.
+    func votePoolPunishment(punishmentID: UUID, voterUID: String, week: Int) async throws {
+        let current: PunishmentRow = try await supabase.from("fantasy_punishments")
+            .select()
+            .eq("id", value: punishmentID)
+            .single()
+            .execute()
+            .value
+
+        let token = "\(voterUID):\(week)"
+        var votes = current.approvalVotes
+        guard !votes.contains(token) else { return } // already voted this item this week
+        votes.append(token)
+
+        try await supabase.from("fantasy_punishments")
+            .update(["approval_votes": votes], returning: .minimal)
+            .eq("id", value: punishmentID)
+            .execute()
+    }
+
+    /// Remove a weekly vote token from a pool punishment.
+    func unvotePoolPunishment(punishmentID: UUID, voterUID: String, week: Int) async throws {
+        let current: PunishmentRow = try await supabase.from("fantasy_punishments")
+            .select()
+            .eq("id", value: punishmentID)
+            .single()
+            .execute()
+            .value
+
+        let token = "\(voterUID):\(week)"
+        var votes = current.approvalVotes
+        votes.removeAll { $0 == token }
+
+        try await supabase.from("fantasy_punishments")
+            .update(["approval_votes": votes], returning: .minimal)
+            .eq("id", value: punishmentID)
+            .execute()
+    }
+
+    /// Mark a pool punishment as chosen for a given week and target.
+    func choosePunishment(punishmentID: UUID, weekNumber: Int, targetUID: String) async throws {
+        try await supabase.from("fantasy_punishments")
+            .update([
+                "status": "chosen",
+                "week_number": "\(weekNumber)",
+                "target_uid": targetUID
+            ], returning: .minimal)
+            .eq("id", value: punishmentID)
+            .execute()
+    }
+
+    /// Delete a pool punishment (only the submitter or commissioner should call this).
+    func deletePoolPunishment(punishmentID: UUID) async throws {
+        try await supabase.from("fantasy_punishments")
+            .delete()
             .eq("id", value: punishmentID)
             .execute()
     }

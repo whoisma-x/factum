@@ -22,6 +22,8 @@ struct ProfileView: View {
     @State private var showAddSubject = false
     @State private var subjectToEdit: StudySubject? = nil
     @State private var showShareSheet = false
+    @State private var showAddQuota = false
+    @State private var editingQuota: StudyQuota? = nil
     
     private var currentUser: UserProfile? {
         let uid = AuthService.shared.currentUserID
@@ -33,8 +35,8 @@ struct ProfileView: View {
         return allTimelapses.filter { $0.authorID == uid }
     }
     
-    @State private var profileTab = 0 // 0 = Progress, 1 = Sessions
-    private let profileTabs = [0, 1]
+    @State private var profileTab = 0 // 0 = Progress, 1 = Sessions, 2 = Quotas
+    private let profileTabs = [0, 1, 2]
     
     var body: some View {
         NavigationStack {
@@ -79,7 +81,7 @@ struct ProfileView: View {
                         PigeonUnderlinePicker(
                             tabs: profileTabs,
                             selection: $profileTab,
-                            label: { $0 == 0 ? "Progress" : "Sessions" }
+                            label: { $0 == 0 ? "Progress" : $0 == 1 ? "Sessions" : "Quotas" }
                         )
                         .padding(.bottom, PigeonTheme.spacing16)
                         .staggeredAppear(index: 2, appeared: appeared)
@@ -88,8 +90,10 @@ struct ProfileView: View {
                         Group {
                             if profileTab == 0 {
                                 progressTab(user: user)
-                            } else {
+                            } else if profileTab == 1 {
                                 myPostsSection
+                            } else {
+                                quotasTab(user: user)
                             }
                         }
                         .staggeredAppear(index: 3, appeared: appeared)
@@ -131,6 +135,16 @@ struct ProfileView: View {
                 if let user = currentUser {
                     let profileLink = profileShareURL(for: user)
                     ShareProfileSheet(url: profileLink, displayName: user.displayName)
+                }
+            }
+            .sheet(isPresented: $showAddQuota) {
+                if let user = currentUser {
+                    AddQuotaView(user: user, subjects: subjects)
+                }
+            }
+            .sheet(item: $editingQuota) { quota in
+                if let user = currentUser {
+                    EditQuotaView(user: user, quota: quota, subjects: subjects)
                 }
             }
             .task {
@@ -266,6 +280,116 @@ struct ProfileView: View {
         return streak
     }
     
+    // MARK: - Quotas Tab
+
+    private func quotasTab(user: UserProfile) -> some View {
+        let quotas = user.studyQuotas
+
+        return VStack(spacing: 12) {
+            if quotas.isEmpty {
+                VStack(spacing: 12) {
+                    Spacer().frame(height: 40)
+                    Image(systemName: "target")
+                        .font(.system(size: 36, weight: .light))
+                        .foregroundStyle(PigeonTheme.secondaryText)
+                    Text("No study quotas yet")
+                        .font(.gloucester(size: 14))
+                        .foregroundStyle(PigeonTheme.secondaryText)
+                    Text("Set study targets for each subject\nto stay on track.")
+                        .font(.gloucester(size: 11))
+                        .foregroundStyle(PigeonTheme.secondaryText.opacity(0.7))
+                        .multilineTextAlignment(.center)
+                    Spacer().frame(height: 20)
+                }
+            } else {
+                ForEach(quotas) { quota in
+                    let color = StudySubject.color(for: quota.subjectName, in: subjects)
+                    Button {
+                        Haptics.light()
+                        editingQuota = quota
+                    } label: {
+                        HStack(spacing: 10) {
+                            Circle()
+                                .fill(color)
+                                .frame(width: 10, height: 10)
+                            Text(quota.subjectName)
+                                .font(.gloucester(size: 13))
+                                .foregroundStyle(PigeonTheme.primaryText)
+                            Spacer()
+                            Text(quotaFrequencyLabel(for: quota))
+                                .font(.gloucester(size: 12))
+                                .foregroundStyle(PigeonTheme.secondaryText)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(PigeonTheme.secondaryText.opacity(0.5))
+                        }
+                        .padding(.vertical, 12)
+                        .padding(.horizontal, 16)
+                        .pigeonGlassSurface(cornerRadius: 12)
+                    }
+                    .contextMenu {
+                        Button(role: .destructive) {
+                            var updated = user.studyQuotas
+                            updated.removeAll { $0.id == quota.id }
+                            user.studyQuotas = updated
+                            try? modelContext.save()
+                            Task {
+                                await SupabaseService.shared.saveDailyQuotas(user.dailyQuotasJSON, forUser: user.firebaseUID ?? "")
+                            }
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+                }
+            }
+
+            Button {
+                Haptics.medium()
+                showAddQuota = true
+            } label: {
+                HStack {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 16))
+                    Text("Add Quota")
+                        .font(.gloucester(size: 13))
+                }
+                .foregroundStyle(quotaGreen)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .background(quotaGreen.opacity(0.1))
+                .cornerRadius(12)
+            }
+        }
+    }
+
+    /// Returns a human-readable label for a quota's frequency and target.
+    private func quotaFrequencyLabel(for quota: StudyQuota) -> String {
+        let time = formatQuotaTime(quota.targetMinutes)
+        switch quota.frequency {
+        case .daily:
+            return "\(time)/day"
+        case .weekly:
+            return "\(time)/week"
+        case .monthly:
+            return "\(time)/month"
+        case .yearly:
+            return "\(time)/year"
+        case .scheduled:
+            if let days = quota.scheduledDays, !days.isEmpty {
+                let dayNames = days.sorted(by: { $0.rawValue < $1.rawValue }).map(\.shortName).joined(separator: ", ")
+                return "\(time) on \(dayNames)"
+            }
+            return "\(time)/scheduled"
+        case .oneTime:
+            if let deadline = quota.deadline {
+                let fmt = DateFormatter()
+                fmt.dateFormat = "MMM d, yyyy"
+                return "\(time) by \(fmt.string(from: deadline))"
+            }
+            return "\(time) total"
+        }
+    }
+
     // MARK: - Progress Tab (Strava-style)
     
     private func progressTab(user: UserProfile) -> some View {
@@ -276,11 +400,32 @@ struct ProfileView: View {
         
         return VStack(spacing: 20) {
             // Stats row (Strava-style: large values, small labels, dividers)
-            PigeonStatRow(stats: [
-                (value: "\(totalHours)h \(totalMins)m", label: "Total Time"),
-                (value: "\(userTimelapses.count)", label: "Sessions"),
-                (value: "\(computedStreakDays)", label: "Streak")
-            ])
+            HStack(spacing: 0) {
+                PigeonStatCell(value: "\(totalHours)h \(totalMins)m", label: "Total Time")
+                    .frame(maxWidth: .infinity)
+                Rectangle().fill(PigeonTheme.separator).frame(width: 1, height: 32)
+                PigeonStatCell(value: "\(userTimelapses.count)", label: "Sessions")
+                    .frame(maxWidth: .infinity)
+                Rectangle().fill(PigeonTheme.separator).frame(width: 1, height: 32)
+                VStack(spacing: 3) {
+                    HStack(spacing: 4) {
+                        Text("\(computedStreakDays)")
+                            .font(.gloucester(size: 22))
+                            .foregroundStyle(PigeonTheme.primaryText)
+                        if computedStreakDays > 0 {
+                            Image(systemName: "flame.fill")
+                                .font(.system(size: 13))
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                    Text("Streak")
+                        .font(PigeonTheme.smallFont)
+                        .foregroundStyle(PigeonTheme.tertiaryText)
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .padding(.vertical, 16)
+            .pigeonGlassSurface(cornerRadius: PigeonTheme.cornerCard)
             
             // Detailed stats + Your Flock side by side
             HStack(spacing: 12) {
@@ -802,7 +947,7 @@ struct EditProfileView: View {
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
                             .strokeBorder(
-                                usernameChanged && usernameAvailable == true ? Color.green.opacity(0.5) :
+                                usernameChanged && usernameAvailable == true ? quotaGreen.opacity(0.5) :
                                 usernameChanged && usernameAvailable == false ? PigeonTheme.destructive.opacity(0.5) :
                                 Color.clear,
                                 lineWidth: 1.5
@@ -819,7 +964,7 @@ struct EditProfileView: View {
                     } else if usernameChanged, let available = usernameAvailable {
                         Text(available ? "Username available" : "Username taken")
                             .font(PigeonTheme.captionFont)
-                            .foregroundStyle(available ? .green : PigeonTheme.destructive)
+                            .foregroundStyle(available ? quotaGreen : PigeonTheme.destructive)
                     }
                 }
                 

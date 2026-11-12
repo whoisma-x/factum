@@ -43,10 +43,10 @@ struct ContentView: View {
                 // Content area — swipeable between tabs
                 Group {
                     switch selectedTab {
-                    case 0: FantasyHomeView()
+                    case 0: FantasyHomeView(showCamera: $showCamera)
                     case 1: FriendsView()
                     case 3: ProfileView()
-                    default: FantasyHomeView()
+                    default: FantasyHomeView(showCamera: $showCamera)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -520,6 +520,9 @@ struct ContentView: View {
         // One-time data restoration from simulator backup (recovers wiped sessions)
         restoreLostSessionsIfNeeded(uid: uid)
         
+        // One-time cleanup: remove bogus "SAT English" sessions
+        await removeSATEnglishSessions(uid: uid)
+        
         // Recompute stats from all local timelapse records
         recomputeStatsFromTimelapses(uid: uid)
         
@@ -763,6 +766,67 @@ struct ContentView: View {
         print("[RESTORE] One-time restoration complete (\(restoredCount) new sessions)")
     }
     
+    /// One-time removal of bogus "SAT English" sessions for the maxl18chen account.
+    /// These were created by earlier seed data and show as a greyed-out "SAT English" subject with ~45h 5m.
+    /// The user's real subject is "SAT Reading/Writing" — that must NOT be touched.
+    @MainActor
+    private func removeSATEnglishSessions(uid: String) async {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: "didRemoveSATEnglish_v3") else { return }
+        guard uid == "61BB6A49-8A34-4DA1-91DE-FA1617C409CF" else {
+            defaults.set(true, forKey: "didRemoveSATEnglish_v3")
+            return
+        }
+        
+        let bogusNames: Set<String> = ["SAT English"]
+        
+        let descriptor = FetchDescriptor<StudyTimelapse>()
+        let allLocal = (try? modelContext.fetch(descriptor)) ?? []
+        let bogus = allLocal.filter { $0.authorID == uid && bogusNames.contains($0.subject) }
+        
+        if !bogus.isEmpty {
+            for tl in bogus {
+                // Delete from Supabase first
+                do {
+                    try await SupabaseService.shared.deleteTimelapse(tl.id)
+                } catch {
+                    print("[CLEANUP] Failed to delete bogus SAT English session from Supabase: \(error.localizedDescription)")
+                }
+                modelContext.delete(tl)
+            }
+            try? modelContext.save()
+            print("[CLEANUP] Removed \(bogus.count) bogus SAT English sessions")
+        }
+        
+        // Also clean up any subject segments referencing "SAT English",
+        // and push the cleaned segments back to Supabase so the website reflects the fix.
+        let allUserSessions = allLocal.filter { $0.authorID == uid }
+        var cleanedTimelapses: [StudyTimelapse] = []
+        for tl in allUserSessions {
+            let segments = tl.subjectSegments
+            let filtered = segments.filter { !bogusNames.contains($0.subject) }
+            if filtered.count != segments.count {
+                tl.subjectSegments = filtered
+                cleanedTimelapses.append(tl)
+            }
+        }
+        if !cleanedTimelapses.isEmpty {
+            try? modelContext.save()
+            print("[CLEANUP] Cleaned bogus SAT English segments from \(cleanedTimelapses.count) sessions")
+            // Re-upload cleaned sessions to Supabase
+            for tl in cleanedTimelapses {
+                do {
+                    try await SupabaseService.shared.saveTimelapse(tl)
+                } catch {
+                    print("[CLEANUP] Failed to push cleaned segments to Supabase: \(error.localizedDescription)")
+                }
+            }
+            print("[CLEANUP] Pushed cleaned segments to Supabase")
+        }
+        
+        defaults.set(true, forKey: "didRemoveSATEnglish_v3")
+    }
+    
     /// Recompute totalStudyMinutes and streakDays from all local timelapse records.
     @MainActor
     private func recomputeStatsFromTimelapses(uid: String) {
@@ -846,6 +910,72 @@ struct ContentView: View {
             let pendingInvites = invites.filter { $0.status == "pending" }
             if !pendingInvites.isEmpty {
                 print("[SYNC] \(pendingInvites.count) pending league invites")
+            }
+
+            // Generate bot study data before fetching, so new sessions are available for scoring
+            await BotStudyGenerator.generateAndUpload(leagues: leagues)
+
+            // Sync league member timelapses so fantasy scoring works
+            // Collect all unique member UIDs across all leagues (excluding self)
+            var leagueMemberUIDs = Set<String>()
+            for league in leagues {
+                for memberUID in league.memberUids where memberUID != uid {
+                    leagueMemberUIDs.insert(memberUID)
+                }
+            }
+
+            // Remove UIDs we already synced as friends
+            let profileDescriptor = FetchDescriptor<UserProfile>(predicate: #Predicate { $0.firebaseUID == uid })
+            let friendUIDs = Set((try? modelContext.fetch(profileDescriptor).first?.friendUIDs) ?? [])
+            let nonFriendLeagueUIDs = leagueMemberUIDs.subtracting(friendUIDs)
+
+            if !nonFriendLeagueUIDs.isEmpty {
+                let existingDescriptor = FetchDescriptor<StudyTimelapse>()
+                let existingIDs = Set((try? modelContext.fetch(existingDescriptor))?.map { $0.id } ?? [])
+
+                // Fetch last 60 days of timelapses for league members not in friends list
+                let cutoff = Calendar.current.date(byAdding: .day, value: -60, to: Date()) ?? Date()
+                let memberRows = try await SupabaseService.shared.fetchTimelapsesForScoring(
+                    playerUIDs: Array(nonFriendLeagueUIDs),
+                    startDate: cutoff,
+                    endDate: Date()
+                )
+
+                var inserted = 0
+                for row in memberRows where !existingIDs.contains(row.id) {
+                    let timelapse = StudyTimelapse(
+                        authorID: row.authorId.uuidString,
+                        authorName: row.authorName,
+                        authorAvatarURL: row.authorAvatarUrl,
+                        caption: row.caption,
+                        studyDescription: row.studyDescription,
+                        subject: row.subject,
+                        durationSeconds: row.durationSeconds,
+                        isLandscape: row.isLandscape
+                    )
+                    timelapse.id = row.id
+                    timelapse.createdAt = row.createdAt
+                    timelapse.likeCount = row.likeCount
+                    timelapse.likedByUIDs = row.likedByUids
+                    timelapse.commentCount = row.commentCount
+                    timelapse.videoDownloadURL = row.videoDownloadUrl
+                    timelapse.thumbnailDownloadURL = row.thumbnailDownloadUrl
+                    if let segments = row.subjectSegmentsJson {
+                        timelapse.subjectSegmentsJSON = segments
+                    }
+                    if let leaves = row.appLeaveCount {
+                        timelapse.appLeaveCount = leaves
+                    }
+                    if let offTask = row.offTaskSeconds {
+                        timelapse.offTaskSeconds = offTask
+                    }
+                    timelapse.cloudSynced = true
+                    modelContext.insert(timelapse)
+                    inserted += 1
+                }
+                if inserted > 0 {
+                    print("[SYNC] Inserted \(inserted) league member timelapses for fantasy scoring")
+                }
             }
         } catch {
             print("[SYNC] League sync failed: \(error)")

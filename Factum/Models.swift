@@ -61,6 +61,105 @@ struct SubjectSegment: Codable, Identifiable, Sendable {
     var colorHex: String? = nil
 }
 
+// MARK: - Study Quota
+
+/// Frequency options for a study quota.
+enum QuotaFrequency: String, Codable, CaseIterable, Sendable {
+    case daily
+    case weekly
+    case monthly
+    case yearly
+    case scheduled   // specific days of the week
+    case oneTime     // by a deadline date
+}
+
+/// Days of the week for scheduled quotas.
+enum Weekday: Int, Codable, CaseIterable, Identifiable, Sendable {
+    case monday = 1, tuesday, wednesday, thursday, friday, saturday, sunday
+
+    var id: Int { rawValue }
+
+    var shortName: String {
+        switch self {
+        case .monday: "M"
+        case .tuesday: "T"
+        case .wednesday: "W"
+        case .thursday: "Th"
+        case .friday: "F"
+        case .saturday: "S"
+        case .sunday: "Su"
+        }
+    }
+
+    /// Maps to Calendar.component(.weekday) where Sunday=1, Monday=2, etc.
+    var calendarWeekday: Int {
+        switch self {
+        case .sunday: 1
+        case .monday: 2
+        case .tuesday: 3
+        case .wednesday: 4
+        case .thursday: 5
+        case .friday: 6
+        case .saturday: 7
+        }
+    }
+}
+
+/// A personal study target for a specific subject.
+struct StudyQuota: Codable, Identifiable, Equatable, Sendable {
+    var id = UUID()
+    var subjectName: String
+    var targetMinutes: Int
+    var frequency: QuotaFrequency = .daily
+    var scheduledDays: [Weekday]?
+    var deadline: Date?
+    var createdAt: Date = Date()
+
+    /// Backward compat alias.
+    var minutesPerDay: Int { targetMinutes }
+
+    enum CodingKeys: String, CodingKey {
+        case id, subjectName, targetMinutes, frequency, scheduledDays, deadline, createdAt
+        case minutesPerDay // legacy
+    }
+
+    init(id: UUID = UUID(), subjectName: String, targetMinutes: Int, frequency: QuotaFrequency = .daily, scheduledDays: [Weekday]? = nil, deadline: Date? = nil, createdAt: Date = Date()) {
+        self.id = id
+        self.subjectName = subjectName
+        self.targetMinutes = targetMinutes
+        self.frequency = frequency
+        self.scheduledDays = scheduledDays
+        self.deadline = deadline
+        self.createdAt = createdAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        subjectName = try c.decode(String.self, forKey: .subjectName)
+        if let t = try? c.decode(Int.self, forKey: .targetMinutes) {
+            targetMinutes = t
+        } else {
+            targetMinutes = try c.decode(Int.self, forKey: .minutesPerDay)
+        }
+        frequency = try c.decodeIfPresent(QuotaFrequency.self, forKey: .frequency) ?? .daily
+        scheduledDays = try c.decodeIfPresent([Weekday].self, forKey: .scheduledDays)
+        deadline = try c.decodeIfPresent(Date.self, forKey: .deadline)
+        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(subjectName, forKey: .subjectName)
+        try c.encode(targetMinutes, forKey: .targetMinutes)
+        try c.encode(frequency, forKey: .frequency)
+        try c.encodeIfPresent(scheduledDays, forKey: .scheduledDays)
+        try c.encodeIfPresent(deadline, forKey: .deadline)
+        try c.encode(createdAt, forKey: .createdAt)
+    }
+}
+
 // MARK: - User Profile
 
 @Model
@@ -80,6 +179,26 @@ final class UserProfile {
     var pendingFriendRequestUIDs: [String]
     var groupIDs: [UUID]
     var isPrivate: Bool = true
+    var dailyQuotasJSON: String?   // JSON-encoded [StudyQuota] (Supabase column: daily_quotas)
+
+    /// Decoded study quotas. Backward-compatible with old DailyQuota JSON.
+    var studyQuotas: [StudyQuota] {
+        get {
+            guard let json = dailyQuotasJSON,
+                  let data = json.data(using: .utf8),
+                  let quotas = try? JSONDecoder().decode([StudyQuota].self, from: data) else {
+                return []
+            }
+            return quotas
+        }
+        set {
+            if newValue.isEmpty {
+                dailyQuotasJSON = nil
+            } else if let data = try? JSONEncoder().encode(newValue) {
+                dailyQuotasJSON = String(data: data, encoding: .utf8)
+            }
+        }
+    }
 
     init(
         displayName: String,

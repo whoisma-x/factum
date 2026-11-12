@@ -44,10 +44,10 @@ struct WeeklyMatchupView: View {
                     if matchup.isBye {
                         Text("BYE")
                             .font(.gloucester(size: 12))
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(Color(red: 0.85, green: 0.55, blue: 0.15))
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
-                            .background(.orange.opacity(0.15))
+                            .background(Color(red: 0.85, green: 0.55, blue: 0.15).opacity(0.12))
                             .clipShape(RoundedRectangle(cornerRadius: 4))
                     }
                 }
@@ -263,9 +263,9 @@ struct WeeklyMatchupView: View {
         Text("\(mult)×")
             .font(.gloucester(size: 10))
             .foregroundStyle(.white)
-            .padding(.horizontal, 3)
+            .padding(.horizontal, 4)
             .padding(.vertical, 1)
-            .background(mult == 3 ? .orange : .blue)
+            .background(mult >= 3 ? Color(red: 0.85, green: 0.55, blue: 0.15) : Color(red: 0.35, green: 0.55, blue: 0.75))
             .clipShape(RoundedRectangle(cornerRadius: 3))
     }
 
